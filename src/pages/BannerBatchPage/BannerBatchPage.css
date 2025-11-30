@@ -139,6 +139,50 @@
   transition: all 0.3s ease;
 }
 
+/* ZIP 上传区域 */
+.template-upload-section {
+  margin-bottom: 20px;
+  padding: 16px;
+  background: linear-gradient(135deg, rgba(0, 212, 255, 0.05) 0%, rgba(102, 126, 234, 0.05) 100%);
+  border: 1.5px solid rgba(0, 212, 255, 0.2);
+  border-radius: 12px;
+}
+
+.template-upload-section h4 {
+  margin: 0 0 8px 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.85);
+}
+
+.template-upload-section .template-upload-hint {
+  margin: 0 0 12px 0;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.6);
+  line-height: 1.5;
+}
+
+.template-upload-divider {
+  display: flex;
+  align-items: center;
+  margin: 20px 0;
+  text-align: center;
+}
+
+.template-upload-divider::before,
+.template-upload-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.template-upload-divider span {
+  padding: 0 12px;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.5);
+}
+
 .banner-control-panel:hover {
   border-color: rgba(0, 212, 255, 0.2);
   box-shadow: 

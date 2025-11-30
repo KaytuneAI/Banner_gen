@@ -32,6 +32,7 @@ export const BannerBatchPage: React.FC = () => {
   const htmlInputRef = useRef<HTMLInputElement>(null);
   const cssInputRef = useRef<HTMLInputElement>(null);
   const jsonInputRef = useRef<HTMLInputElement>(null);
+  const zipInputRef = useRef<HTMLInputElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   // 从 HTML 中提取 head 中的 link 标签（用于外部 CSS）
@@ -46,6 +47,11 @@ export const BannerBatchPage: React.FC = () => {
 
   // 构建 iframe 的 srcDoc 字符串
   const buildSrcDoc = (html: string, css: string): string => {
+    // 如果 HTML 已经是完整的文档（来自 ZIP 上传，已内联所有资源），直接返回
+    if (html.trim().startsWith("<!DOCTYPE html>") || html.trim().startsWith("<html")) {
+      return html;
+    }
+    
     // 如果上传的 HTML 本身包含 <html> 等标签，提取 body 内容
     // 否则直接使用
     let htmlBody = html.trim();
@@ -253,7 +259,310 @@ export const BannerBatchPage: React.FC = () => {
     setSuccess("已清除 HTML 模板");
   };
 
-  // 点击预览区域上传 HTML
+  // 替换 HTML 中的 <img src="..."> 为 Base64
+  const replaceHtmlImgSrcWithBase64 = (
+    html: string,
+    imageMap: Record<string, string>
+  ): string => {
+    return html.replace(
+      /<img([^>]+)src=["']([^"']+)["']([^>]*)>/gi,
+      (match, before, src, after) => {
+        // 跳过已经是 data URL 或 http(s) 的链接
+        if (src.startsWith("data:") || src.startsWith("http://") || src.startsWith("https://")) {
+          return match;
+        }
+
+        // 标准化路径（去掉前导 ./ 和 ..）
+        const normalizedPath = src.replace(/^\.\//, "").replace(/^\.\.\//, "");
+        const dataUrl = imageMap[src] || imageMap[normalizedPath] || imageMap["./" + normalizedPath];
+
+        if (!dataUrl) {
+          return match; // 没有匹配上就保持原样（可能是外链图）
+        }
+
+        return `<img${before}src="${dataUrl}"${after}>`;
+      }
+    );
+  };
+
+  // 替换 CSS 中的 url(...) 为 Base64
+  const replaceCssUrlWithBase64 = (
+    css: string,
+    imageMap: Record<string, string>
+  ): string => {
+    return css.replace(/url\(["']?([^"')]+)["']?\)/gi, (match, urlPath) => {
+      // 跳过已经是 data URL 或 http(s) 的链接
+      if (urlPath.startsWith("http://") || urlPath.startsWith("https://") || urlPath.startsWith("data:")) {
+        return match;
+      }
+
+      // 标准化路径
+      const normalizedPath = urlPath.replace(/^\.\//, "").replace(/^\.\.\//, "");
+      const dataUrl = imageMap[urlPath] || imageMap[normalizedPath] || imageMap["./" + normalizedPath];
+
+      if (!dataUrl) {
+        return match;
+      }
+
+      return `url("${dataUrl}")`;
+    });
+  };
+
+  // 生成最终可注入 iframe 的内联 HTML（所有资源已 Base64 内联）
+  const buildInlineHtml = (bodyHtml: string, cssText: string): string => {
+    // 如果 bodyHtml 里已经包含 <html> / <body>，提取 body 内容
+    const bodyMatch = bodyHtml.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+    let bodyContent = bodyHtml;
+    
+    if (bodyMatch) {
+      bodyContent = bodyMatch[1].trim();
+    } else {
+      // 如果没有 body 标签，检查是否包含完整的 html 结构
+      const hasHtmlTag = /<html[^>]*>/i.test(bodyHtml);
+      if (hasHtmlTag) {
+        const headEndMatch = bodyHtml.match(/<\/head>([\s\S]*)/i);
+        if (headEndMatch) {
+          bodyContent = headEndMatch[1].trim();
+        }
+      }
+    }
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    ${cssText ? `<style>${cssText}</style>` : ""}
+    <style>
+      /* 字段高亮样式 */
+      .field-highlight {
+        outline: 3px solid #667eea !important;
+        outline-offset: 2px !important;
+        box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.3) !important;
+        background-color: rgba(102, 126, 234, 0.1) !important;
+        transition: all 0.2s ease !important;
+      }
+    </style>
+  </head>
+  <body>
+    ${bodyContent}
+  </body>
+</html>`;
+  };
+
+  // 处理 ZIP 文件上传
+  const handleZipUpload = async (file: File | null) => {
+    if (!file) return;
+
+    setError("");
+    setSuccess("");
+
+    try {
+      const zip = await JSZip.loadAsync(file);
+
+      // 1. 找到 html、css、图片文件、JSON 文件
+      const htmlFiles: JSZip.JSZipObject[] = [];
+      const cssFiles: JSZip.JSZipObject[] = [];
+      const imageFiles: JSZip.JSZipObject[] = [];
+      const jsonFiles: JSZip.JSZipObject[] = [];
+
+      zip.forEach((relativePath, entry) => {
+        if (entry.dir) return;
+        const lower = relativePath.toLowerCase();
+
+        if (lower.endsWith(".html") || lower.endsWith(".htm")) {
+          htmlFiles.push(entry);
+        } else if (lower.endsWith(".css")) {
+          cssFiles.push(entry);
+        } else if (lower.endsWith(".json")) {
+          jsonFiles.push(entry);
+        } else if (
+          lower.endsWith(".png") ||
+          lower.endsWith(".jpg") ||
+          lower.endsWith(".jpeg") ||
+          lower.endsWith(".gif") ||
+          lower.endsWith(".webp") ||
+          lower.endsWith(".svg")
+        ) {
+          imageFiles.push(entry);
+        }
+      });
+
+      if (htmlFiles.length === 0) {
+        setError("ZIP 文件中未找到 HTML 文件");
+        return;
+      }
+
+      // 2. 选主 html 文件（优先 index.html）
+      const mainHtmlEntry =
+        htmlFiles.find((f) => f.name.toLowerCase().includes("index")) ||
+        htmlFiles[0];
+
+      const rawHtml = await mainHtmlEntry.async("text");
+
+      // 3. 合并所有 css 文件内容
+      let cssText = "";
+      for (const cssEntry of cssFiles) {
+        const cssPart = await cssEntry.async("text");
+        cssText += "\n" + cssPart;
+      }
+
+      // 4. 构建图片路径 -> Base64 data URL 映射
+      const imageMap: Record<string, string> = {};
+      for (const imgEntry of imageFiles) {
+        // 注意：JSZip 中的 name 是 zip 内相对路径，例如 "image/bg.png"
+        const ext = imgEntry.name.toLowerCase().split(".").pop() || "png";
+        let mime = "image/png";
+        
+        if (ext === "jpg" || ext === "jpeg") {
+          mime = "image/jpeg";
+        } else if (ext === "gif") {
+          mime = "image/gif";
+        } else if (ext === "webp") {
+          mime = "image/webp";
+        } else if (ext === "svg") {
+          mime = "image/svg+xml";
+        }
+
+        const base64 = await imgEntry.async("base64");
+        const dataUrl = `data:${mime};base64,${base64}`;
+
+        // 存多种 key：原始路径、去掉前导 "./"、添加 "./"
+        const normPath = imgEntry.name.replace(/^\.\//, "");
+        imageMap[imgEntry.name] = dataUrl;
+        imageMap[normPath] = dataUrl;
+        imageMap["./" + normPath] = dataUrl;
+        // 也支持文件名匹配（只匹配文件名，不包含路径）
+        const fileName = normPath.split("/").pop() || normPath;
+        if (fileName !== normPath) {
+          imageMap[fileName] = dataUrl;
+        }
+      }
+
+      // 5. 替换 HTML 与 CSS 中的图片路径为 Base64
+      const processedHtml = replaceHtmlImgSrcWithBase64(rawHtml, imageMap);
+      const processedCss = replaceCssUrlWithBase64(cssText, imageMap);
+
+      // 6. 生成最终 HTML，用于 iframe srcDoc（所有资源已内联，不需要 base 标签）
+      const finalHtml = buildInlineHtml(processedHtml, processedCss);
+
+      // 7. 解析 data-field / data-label（沿用现有逻辑）
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(finalHtml, "text/html");
+
+      const fieldMap = new Map<string, TemplateField>();
+      doc.querySelectorAll<HTMLElement>("[data-field]").forEach((el) => {
+        const name = el.getAttribute("data-field");
+        if (!name) return;
+
+        if (!fieldMap.has(name)) {
+          const label = el.getAttribute("data-label") || undefined;
+          fieldMap.set(name, { name, label });
+        }
+      });
+
+      // 特殊处理价格字段（data-field-int 和 data-field-decimal）
+      doc.querySelectorAll<HTMLElement>("[data-field-int]").forEach((el) => {
+        const intName = el.getAttribute("data-field-int");
+        const decimalName = el.getAttribute("data-field-decimal");
+        if (intName && !fieldMap.has(intName)) {
+          fieldMap.set(intName, { name: intName, label: "到手价-整数部分" });
+        }
+        if (decimalName && !fieldMap.has(decimalName)) {
+          fieldMap.set(decimalName, { name: decimalName, label: "到手价-小数部分" });
+        }
+      });
+
+      // 8. 处理 JSON 数据文件（如果存在）
+      if (jsonFiles.length > 0) {
+        try {
+          // 优先查找常见的 JSON 文件名（data.json, test.json 等）
+          const preferredJsonNames = ["data.json", "test.json", "banner.json", "template.json"];
+          let jsonEntry = jsonFiles.find((f) => 
+            preferredJsonNames.some(name => f.name.toLowerCase().includes(name.toLowerCase()))
+          ) || jsonFiles[0];
+
+          const jsonText = await jsonEntry.async("text");
+          const parsedJson = JSON.parse(jsonText);
+          
+          // 处理 JSON 数据：将图片路径替换为 Base64 data URL
+          const processedJsonData = Array.isArray(parsedJson) ? parsedJson : [parsedJson];
+          
+          // 遍历 JSON 数据，替换图片路径为 Base64
+          const processedData = processedJsonData.map((item: BannerData) => {
+            const processedItem: BannerData = { ...item };
+            
+            // 遍历所有字段，查找图片路径并替换
+            Object.keys(processedItem).forEach((key) => {
+              const value = processedItem[key];
+              if (typeof value === "string" && value) {
+                // 检查是否是图片路径（相对路径或文件名）
+                const normalizedPath = value.replace(/^\.\//, "");
+                const base64Url = imageMap[value] || imageMap[normalizedPath] || imageMap["./" + normalizedPath] || imageMap[normalizedPath.split("/").pop() || ""];
+                
+                if (base64Url) {
+                  processedItem[key] = base64Url;
+                }
+              }
+            });
+            
+            return processedItem;
+          });
+
+          setJsonData(processedData);
+          setCurrentIndex(0);
+          
+          // 应用第一条数据到预览
+          if (processedData.length > 0) {
+            // 延迟应用，确保 HTML 已设置
+            setTimeout(() => {
+              applyJsonDataToIframe(processedData[0], 0);
+            }, 100);
+          }
+        } catch (jsonErr) {
+          console.warn("解析 ZIP 中的 JSON 文件失败:", jsonErr);
+          // JSON 解析失败不影响模板加载，只记录警告
+        }
+      }
+
+      // 9. 更新状态
+      setTemplateFields(Array.from(fieldMap.values()));
+      setHtmlContent(finalHtml);
+      setCssContent(""); // ZIP 中的 CSS 已经内联到 HTML 中
+      setHtmlFileName(file.name);
+      setCssFileName("");
+
+      let successMsg = `成功加载 ZIP 模板: ${file.name}`;
+      if (htmlFiles.length > 0) {
+        successMsg += ` (HTML: ${mainHtmlEntry.name})`;
+      }
+      if (cssFiles.length > 0) {
+        successMsg += ` (CSS: ${cssFiles.length} 个文件)`;
+      }
+      if (imageFiles.length > 0) {
+        successMsg += ` (图片: ${imageFiles.length} 个，已转为 Base64 内联)`;
+      }
+      if (jsonFiles.length > 0) {
+        successMsg += ` (JSON: ${jsonFiles.length} 个文件，已自动加载数据)`;
+      }
+      if (fieldMap.size > 0) {
+        successMsg += ` (发现 ${fieldMap.size} 个可编辑字段)`;
+      }
+      setSuccess(successMsg);
+
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "ZIP 文件处理失败";
+      setError(message);
+      console.error("ZIP 处理错误:", err);
+    }
+
+    // 清空 input
+    if (zipInputRef.current) {
+      zipInputRef.current.value = "";
+    }
+  };
+
+  // 点击预览区域上传 ZIP
   const handlePreviewAreaClick = (e: React.MouseEvent<HTMLDivElement>) => {
     // 如果已经有 HTML 内容，不触发上传
     if (htmlContent) {
@@ -264,9 +573,9 @@ export const BannerBatchPage: React.FC = () => {
     if (target.tagName === 'IFRAME') {
       return;
     }
-    // 触发 HTML 文件选择（包括点击 placeholder 和空白区域）
-    if (htmlInputRef.current) {
-      htmlInputRef.current.click();
+    // 触发 ZIP 文件选择（包括点击 placeholder 和空白区域）
+    if (zipInputRef.current) {
+      zipInputRef.current.click();
     }
   };
 
@@ -846,7 +1155,7 @@ export const BannerBatchPage: React.FC = () => {
     <div className="banner-batch-page">
       <div className="banner-batch-header">
         <h1>Kaytune FluidDAM - 广告模板批量编辑工具</h1>
-        <p className="subtitle">上传 HTML/CSS 文件，实时预览模板效果</p>
+        <p className="subtitle">上传 ZIP 模板文件，实时预览模板效果</p>
       </div>
 
       <div className="banner-batch-content">
@@ -855,7 +1164,7 @@ export const BannerBatchPage: React.FC = () => {
           <div 
             className={`banner-preview-wrapper ${!htmlContent ? 'clickable-upload' : ''}`}
             onClick={handlePreviewAreaClick}
-            title={htmlContent ? '' : '点击上传 HTML 模板'}
+            title={htmlContent ? '' : '点击上传 ZIP 模板'}
           >
             {htmlContent ? (
               <iframe
@@ -877,8 +1186,8 @@ export const BannerBatchPage: React.FC = () => {
               />
             ) : (
               <div className="banner-placeholder">
-                <p>请先上传 HTML 模板文件</p>
-                <p className="hint">点击此区域或下方按钮上传 HTML 文件</p>
+                <p>请先上传 ZIP 模板文件</p>
+                <p className="hint">点击下方按钮上传包含 HTML、CSS 和图片的 ZIP 文件</p>
               </div>
             )}
           </div>
@@ -886,7 +1195,26 @@ export const BannerBatchPage: React.FC = () => {
           {/* 模板选择区域 */}
           <div className="template-selector">
             <h3>选择模板</h3>
-            {htmlContent || cssContent ? (
+            
+            {/* ZIP 上传区域 */}
+            <div className="template-upload-section">
+              <h4>上传模板 ZIP（推荐）</h4>
+              <p className="template-upload-hint">
+                上传包含 HTML、CSS 和图片的 ZIP 文件，系统会自动将资源转为 Base64 内联
+              </p>
+              <label className="template-upload-label">
+                <input
+                  ref={zipInputRef}
+                  type="file"
+                  accept=".zip"
+                  onChange={(e) => handleZipUpload(e.target.files?.[0] || null)}
+                  className="template-file-input"
+                />
+                <span className="btn btn-primary btn-small">上传 ZIP 模板</span>
+              </label>
+            </div>
+
+            {htmlContent ? (
               <div className="template-info">
                 <div className="template-status">
                   <span className="template-status-icon">✓</span>
@@ -894,98 +1222,27 @@ export const BannerBatchPage: React.FC = () => {
                 </div>
                 {htmlFileName && (
                   <div className="template-file-name">
-                    <span>HTML: {htmlFileName}</span>
+                    <span>模板: {htmlFileName}</span>
                     <button
-                      onClick={handleClearHtml}
+                      onClick={() => {
+                        setHtmlContent("");
+                        setCssContent("");
+                        setHtmlFileName("");
+                        setCssFileName("");
+                        setTemplateFields([]);
+                        setSelectedField(null);
+                        setSelectedFieldValue("");
+                        setSuccess("已清除模板");
+                      }}
                       className="template-clear-btn"
-                      title="清除 HTML"
+                      title="清除模板"
                     >
                       ×
                     </button>
                   </div>
                 )}
-                {cssFileName && (
-                  <div className="template-file-name">
-                    <span>CSS: {cssFileName}</span>
-                    <button
-                      onClick={handleClearCss}
-                      className="template-clear-btn"
-                      title="清除 CSS"
-                    >
-                      ×
-                    </button>
-                  </div>
-                )}
-                {!htmlFileName && (
-                  <div className="template-warning">
-                    ⚠️ 请上传 HTML 模板（必需）
-                  </div>
-                )}
-                <div className="template-actions">
-                  {!htmlFileName && (
-                    <label className="template-upload-label">
-                      <input
-                        ref={htmlInputRef}
-                        type="file"
-                        accept=".html,.htm,text/html"
-                        onChange={handleHtmlUpload}
-                        className="template-file-input"
-                      />
-                      <span className="btn btn-secondary btn-small">上传 HTML（必需）</span>
-                    </label>
-                  )}
-                  {!cssFileName && (
-                    <label className="template-upload-label">
-                      <input
-                        ref={cssInputRef}
-                        type="file"
-                        accept=".css,text/css"
-                        onChange={handleCssUpload}
-                        className="template-file-input"
-                      />
-                      <span className="btn btn-secondary btn-small">上传 CSS（可选）</span>
-                    </label>
-                  )}
-                </div>
               </div>
-            ) : (
-              <div className="template-upload-buttons">
-                <div className="template-upload-item">
-                  <label className="template-upload-label">
-                    <input
-                      ref={htmlInputRef}
-                      type="file"
-                      accept=".html,.htm,text/html"
-                      onChange={handleHtmlUpload}
-                      className="template-file-input"
-                    />
-                    <span className="btn btn-secondary btn-small">
-                      上传 HTML <span className="required-mark">*</span>
-                    </span>
-                  </label>
-                  <span className="template-upload-hint">必需</span>
-                </div>
-                <div className="template-upload-item">
-                  <label className="template-upload-label">
-                    <input
-                      ref={cssInputRef}
-                      type="file"
-                      accept=".css,text/css"
-                      onChange={handleCssUpload}
-                      className="template-file-input"
-                    />
-                    <span className="btn btn-secondary btn-small">上传 CSS</span>
-                  </label>
-                  <span className="template-upload-hint">
-                    可选（如果 HTML 中有内联样式可不上传）
-                  </span>
-                </div>
-                <div className="template-hint">
-                  <p>💡 提示：上传 HTML 文件后，预览将实时显示在左侧</p>
-                  <p>💡 CSS 文件可选，用于外部样式表</p>
-                </div>
-              </div>
-            )}
+            ) : null}
           </div>
         </div>
 
@@ -1072,7 +1329,7 @@ export const BannerBatchPage: React.FC = () => {
 
           {/* JSON 数据上传 */}
           <div className="control-section">
-            <h3>上传批量替换文件(JSON格式)</h3>
+            <h3>批量替换素材</h3>
             <label className="template-upload-label">
               <input
                 ref={jsonInputRef}
@@ -1081,11 +1338,13 @@ export const BannerBatchPage: React.FC = () => {
                 onChange={handleJsonUpload}
                 className="file-input"
               />
-              <span className="file-input-label">选择批量替换文件</span>
+              <span className="file-input-label">
+                {jsonData.length > 0 ? `批量替换素材 (已加载 ${jsonData.length} 条)` : "选择 JSON 文件"}
+              </span>
             </label>
             {jsonData.length > 0 && (
               <div className="info-text">
-                已加载 <strong>{jsonData.length}</strong> 条数据
+                <strong>✓ 已加载 {jsonData.length} 条数据</strong>
               </div>
             )}
           </div>
@@ -1137,11 +1396,10 @@ export const BannerBatchPage: React.FC = () => {
           <div className="control-section">
             <h3>使用说明</h3>
             <div className="info-text">
-              <p>1. 上传 HTML 文件（必需）</p>
-              <p>2. 可选上传 CSS 文件</p>
-              <p>3. 上传 JSON 数据文件（包含多条数据，图片路径在 JSON 中指定）</p>
-              <p>4. 使用左右按钮切换预览不同数据</p>
-              <p>5. 点击"一键生成"批量导出 PNG</p>
+              <p>1. 上传 ZIP 模板文件（包含 HTML、CSS 和图片，系统会自动转为 Base64 内联）</p>
+              <p>2. ZIP 中可包含 JSON 数据文件，会自动加载；也可单独上传 JSON 文件</p>
+              <p>3. 使用左右按钮切换预览不同数据</p>
+              <p>4. 点击"一键生成"批量导出 PNG</p>
             </div>
           </div>
         </div>

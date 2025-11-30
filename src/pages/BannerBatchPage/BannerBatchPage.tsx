@@ -143,6 +143,18 @@ export const BannerBatchPage: React.FC = () => {
           }
         });
 
+        // 特殊处理价格字段（data-field-int 和 data-field-decimal）
+        doc.querySelectorAll<HTMLElement>("[data-field-int]").forEach((el) => {
+          const intName = el.getAttribute("data-field-int");
+          const decimalName = el.getAttribute("data-field-decimal");
+          if (intName && !fieldMap.has(intName)) {
+            fieldMap.set(intName, { name: intName, label: "到手价-整数部分" });
+          }
+          if (decimalName && !fieldMap.has(decimalName)) {
+            fieldMap.set(decimalName, { name: decimalName, label: "到手价-小数部分" });
+          }
+        });
+
         // 3. 保存字段列表（用于右侧显示）
         setTemplateFields(Array.from(fieldMap.values()));
 
@@ -241,6 +253,23 @@ export const BannerBatchPage: React.FC = () => {
     setSuccess("已清除 HTML 模板");
   };
 
+  // 点击预览区域上传 HTML
+  const handlePreviewAreaClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    // 如果已经有 HTML 内容，不触发上传
+    if (htmlContent) {
+      return;
+    }
+    // 如果点击的是 iframe，不触发上传
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'IFRAME') {
+      return;
+    }
+    // 触发 HTML 文件选择（包括点击 placeholder 和空白区域）
+    if (htmlInputRef.current) {
+      htmlInputRef.current.click();
+    }
+  };
+
   // 高亮 iframe 中的元素
   const highlightElementInIframe = useCallback((fieldName: string) => {
     if (!iframeRef.current) return;
@@ -256,29 +285,53 @@ export const BannerBatchPage: React.FC = () => {
         previousHighlighted.classList.remove("field-highlight");
       }
 
-      // 查找对应字段的元素
-      const element = iframeDoc.querySelector(`[data-field="${fieldName}"]`) as HTMLElement;
-      if (element) {
-        // 添加高亮样式
-        element.classList.add("field-highlight");
-        
-        // 获取元素的内容
-        let value = "";
-        if (element.tagName === "IMG") {
-          value = (element as HTMLImageElement).src || "";
+      // 特殊处理价格字段
+      if (fieldName === 'sec_price_int' || fieldName === 'sec_price_decimal') {
+        const priceEl = iframeDoc.querySelector('[data-field-int]') as HTMLElement;
+        if (priceEl) {
+          priceEl.classList.add("field-highlight");
+          
+          // 获取价格值
+          const signNode = priceEl.querySelector('.sign');
+          const decimalNode = priceEl.querySelector('.decimal');
+          const intValue = signNode?.nextSibling?.nodeValue || '';
+          const decValue = decimalNode?.textContent || '';
+          
+          setSelectedFieldValue(fieldName === 'sec_price_int' ? intValue : decValue);
+          
+          try {
+            priceEl.scrollIntoView({ behavior: "smooth", block: "center" });
+          } catch (e) {
+            // 忽略错误
+          }
         } else {
-          value = element.textContent?.trim() || element.innerText?.trim() || "";
-        }
-        setSelectedFieldValue(value);
-
-        // 滚动到元素位置（在 iframe 内部滚动）
-        try {
-          element.scrollIntoView({ behavior: "smooth", block: "center" });
-        } catch (e) {
-          // 如果滚动失败，忽略错误
+          setSelectedFieldValue("未找到对应元素");
         }
       } else {
-        setSelectedFieldValue("未找到对应元素");
+        // 普通字段处理
+        const element = iframeDoc.querySelector(`[data-field="${fieldName}"]`) as HTMLElement;
+        if (element) {
+          // 添加高亮样式
+          element.classList.add("field-highlight");
+          
+          // 获取元素的内容
+          let value = "";
+          if (element.tagName === "IMG") {
+            value = (element as HTMLImageElement).src || "";
+          } else {
+            value = element.textContent?.trim() || element.innerText?.trim() || "";
+          }
+          setSelectedFieldValue(value);
+
+          // 滚动到元素位置（在 iframe 内部滚动）
+          try {
+            element.scrollIntoView({ behavior: "smooth", block: "center" });
+          } catch (e) {
+            // 如果滚动失败，忽略错误
+          }
+        } else {
+          setSelectedFieldValue("未找到对应元素");
+        }
       }
     } catch (e) {
       console.warn("无法访问 iframe 内容:", e);
@@ -321,39 +374,80 @@ export const BannerBatchPage: React.FC = () => {
       const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
       if (!iframeDoc) return;
 
-      // 查找对应字段的元素
-      const element = iframeDoc.querySelector(`[data-field="${fieldName}"]`) as HTMLElement;
-      if (element) {
-        // 确保高亮样式还在
-        if (!element.classList.contains("field-highlight")) {
-          // 清除其他高亮
-          const previousHighlighted = iframeDoc.querySelector(".field-highlight");
-          if (previousHighlighted) {
-            previousHighlighted.classList.remove("field-highlight");
+      // 特殊处理价格字段
+      if (fieldName === 'sec_price_int' || fieldName === 'sec_price_decimal') {
+        const priceEl = iframeDoc.querySelector('[data-field-int]') as HTMLElement;
+        if (priceEl) {
+          // 高亮整个价格区域
+          if (!priceEl.classList.contains("field-highlight")) {
+            const previousHighlighted = iframeDoc.querySelector(".field-highlight");
+            if (previousHighlighted) {
+              previousHighlighted.classList.remove("field-highlight");
+            }
+            priceEl.classList.add("field-highlight");
           }
-          element.classList.add("field-highlight");
-        }
 
-        if (element.tagName === "IMG") {
-          // 如果是图片，更新 src
-          (element as HTMLImageElement).src = newValue;
-        } else {
-          // 如果是文本元素，更新内容
-          element.textContent = newValue;
-        }
-        
-        // 更新当前值状态
-        setSelectedFieldValue(newValue);
-        
-        // 保存编辑的值到 editedValues
-        setEditedValues(prev => ({
-          ...prev,
-          [currentIndex]: {
-            ...prev[currentIndex],
-            [fieldName]: newValue
+          // 获取当前价格值
+          const currentInt = priceEl.getAttribute('data-field-int') === 'sec_price_int' 
+            ? (priceEl.querySelector('.sign')?.nextSibling?.nodeValue || '')
+            : '';
+          const currentDecimal = priceEl.querySelector('.decimal')?.textContent || '';
+          
+          // 更新对应的值
+          if (fieldName === 'sec_price_int') {
+            const signNode = priceEl.querySelector('.sign');
+            if (signNode && signNode.nextSibling && signNode.nextSibling.nodeType === Node.TEXT_NODE) {
+              signNode.nextSibling.nodeValue = newValue;
+            }
+          } else if (fieldName === 'sec_price_decimal') {
+            const decimalNode = priceEl.querySelector('.decimal');
+            if (decimalNode) {
+              decimalNode.textContent = newValue.startsWith('.') ? newValue : '.' + newValue;
+            }
           }
-        }));
+
+          // 更新显示值（组合整数和小数）
+          const signNode = priceEl.querySelector('.sign');
+          const decimalNode = priceEl.querySelector('.decimal');
+          const intValue = signNode?.nextSibling?.nodeValue || '';
+          const decValue = decimalNode?.textContent || '';
+          setSelectedFieldValue(fieldName === 'sec_price_int' ? intValue : decValue);
+        }
+      } else {
+        // 普通字段处理
+        const element = iframeDoc.querySelector(`[data-field="${fieldName}"]`) as HTMLElement;
+        if (element) {
+          // 确保高亮样式还在
+          if (!element.classList.contains("field-highlight")) {
+            // 清除其他高亮
+            const previousHighlighted = iframeDoc.querySelector(".field-highlight");
+            if (previousHighlighted) {
+              previousHighlighted.classList.remove("field-highlight");
+            }
+            element.classList.add("field-highlight");
+          }
+
+          if (element.tagName === "IMG") {
+            // 如果是图片，更新 src
+            (element as HTMLImageElement).src = newValue;
+          } else {
+            // 如果是文本元素，更新内容
+            element.textContent = newValue;
+          }
+          
+          // 更新当前值状态
+          setSelectedFieldValue(newValue);
+        }
       }
+      
+      // 保存编辑的值到 editedValues
+      setEditedValues(prev => ({
+        ...prev,
+        [currentIndex]: {
+          ...prev[currentIndex],
+          [fieldName]: newValue
+        }
+      }));
     } catch (e) {
       console.warn("无法更新 iframe 内容:", e);
     }
@@ -394,6 +488,44 @@ export const BannerBatchPage: React.FC = () => {
     }
   };
 
+  // 更新价格字段（特殊处理，因为价格结构特殊）
+  const updatePriceFields = useCallback((iframeDoc: Document, intValue: string, decimalValue: string) => {
+    const priceEl = iframeDoc.querySelector('[data-field-int]') as HTMLElement;
+    if (!priceEl) return;
+
+    const signNode = priceEl.querySelector('.sign');
+    const decimalNode = priceEl.querySelector('.decimal');
+
+    // 替换整数（sign 节点后的文本节点）
+    if (signNode) {
+      // 查找 sign 节点后的文本节点
+      let textNode = signNode.nextSibling;
+      while (textNode && textNode.nodeType !== Node.TEXT_NODE) {
+        textNode = textNode.nextSibling;
+      }
+      
+      if (textNode && textNode.nodeType === Node.TEXT_NODE) {
+        // 如果存在文本节点，直接更新
+        textNode.nodeValue = intValue;
+      } else {
+        // 如果没有文本节点，创建一个并插入
+        const newTextNode = iframeDoc.createTextNode(intValue);
+        if (decimalNode) {
+          priceEl.insertBefore(newTextNode, decimalNode);
+        } else {
+          priceEl.appendChild(newTextNode);
+        }
+      }
+    }
+
+    // 替换小数部分
+    if (decimalNode) {
+      decimalNode.textContent = decimalValue.startsWith('.')
+        ? decimalValue
+        : '.' + decimalValue;
+    }
+  }, []);
+
   // 将 JSON 数据应用到 iframe（会合并已编辑的值）
   const applyJsonDataToIframe = useCallback((data: BannerData, index: number) => {
     if (!iframeRef.current || !htmlContent) return;
@@ -406,9 +538,18 @@ export const BannerBatchPage: React.FC = () => {
       // 获取该索引的编辑值（如果有）
       const edits = editedValues[index] || {};
 
-      // 遍历所有字段，更新对应元素
+      // 特殊处理价格区域
+      if (data.sec_price_int !== undefined && data.sec_price_decimal !== undefined) {
+        const intValue = edits.sec_price_int !== undefined ? edits.sec_price_int : String(data.sec_price_int);
+        const decimalValue = edits.sec_price_decimal !== undefined ? edits.sec_price_decimal : String(data.sec_price_decimal);
+        updatePriceFields(iframeDoc, intValue, decimalValue);
+      }
+
+      // 遍历所有字段，更新对应元素（跳过价格字段，已特殊处理）
       Object.entries(data).forEach(([fieldName, value]) => {
         if (value === undefined || value === null) return;
+        // 跳过价格字段
+        if (fieldName === 'sec_price_int' || fieldName === 'sec_price_decimal') return;
 
         const element = iframeDoc.querySelector(`[data-field="${fieldName}"]`) as HTMLElement;
         if (element) {
@@ -426,7 +567,7 @@ export const BannerBatchPage: React.FC = () => {
       
       // 应用编辑值中可能存在的额外字段（不在 JSON 中的）
       Object.entries(edits).forEach(([fieldName, value]) => {
-        if (data[fieldName] === undefined) {
+        if (data[fieldName] === undefined && fieldName !== 'sec_price_int' && fieldName !== 'sec_price_decimal') {
           const element = iframeDoc.querySelector(`[data-field="${fieldName}"]`) as HTMLElement;
           if (element) {
             if (element.tagName === "IMG") {
@@ -440,7 +581,7 @@ export const BannerBatchPage: React.FC = () => {
     } catch (e) {
       console.warn("无法应用 JSON 数据到 iframe:", e);
     }
-  }, [htmlContent, editedValues]);
+  }, [htmlContent, editedValues, updatePriceFields]);
 
   // 当前数据变化时，应用到 iframe
   useEffect(() => {
@@ -711,7 +852,11 @@ export const BannerBatchPage: React.FC = () => {
       <div className="banner-batch-content">
         {/* 左侧预览区 */}
         <div className="banner-preview-section">
-          <div className="banner-preview-wrapper">
+          <div 
+            className={`banner-preview-wrapper ${!htmlContent ? 'clickable-upload' : ''}`}
+            onClick={handlePreviewAreaClick}
+            title={htmlContent ? '' : '点击上传 HTML 模板'}
+          >
             {htmlContent ? (
               <iframe
                 ref={iframeRef}
@@ -733,7 +878,7 @@ export const BannerBatchPage: React.FC = () => {
             ) : (
               <div className="banner-placeholder">
                 <p>请先上传 HTML 模板文件</p>
-                <p className="hint">上传 HTML 文件后，预览将在此显示</p>
+                <p className="hint">点击此区域或下方按钮上传 HTML 文件</p>
               </div>
             )}
           </div>

@@ -80,6 +80,16 @@
     0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
+/* 当没有 HTML 内容时，显示可点击的视觉提示 */
+.banner-preview-wrapper.clickable-upload {
+  cursor: pointer;
+}
+
+.banner-preview-wrapper.clickable-upload:hover {
+  background: #f8f9fa;
+  border-color: rgba(0, 212, 255, 0.5);
+}
+
 .preview-iframe {
   border: none;
   background: transparent;
@@ -93,6 +103,13 @@
   text-align: center;
   color: rgba(0, 0, 0, 0.4);
   padding: 80px 20px;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  pointer-events: none; /* 让点击事件穿透到父元素 */
 }
 
 .banner-placeholder p {

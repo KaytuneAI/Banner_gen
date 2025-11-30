@@ -276,6 +276,8 @@ body {
   margin-left: 260px;
   margin-top: 55px;
   text-align:left;
+  width: auto;  /* 不限制宽度，让内容自然展开 */
+  min-width: 0;  /* 允许收缩 */
 }
 
 .date{
@@ -289,6 +291,7 @@ body {
   font-size: 55px;
   font-weight: bold;
   line-height: 90px;
+  white-space: nowrap;  /* 防止换行 */
   background: linear-gradient(to bottom, #fefdf8, #f7efc8);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;

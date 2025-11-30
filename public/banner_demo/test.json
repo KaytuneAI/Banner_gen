@@ -14,7 +14,7 @@
     "gift_remark": "下单送超级大礼包 赠品按库存随机发货",
     "gift_value": "36.9",
 
-    "original_price": "75.9",
+    "original_price": "京东价:￥75.9",
     "sec_price_int": "29",
     "sec_price_decimal": ".9",
 
@@ -37,7 +37,7 @@
     "gift_remark": "赠品按仓库库存随机发放",
     "gift_value": "29.9",
 
-    "original_price": "89.9",
+    "original_price": "京东价:￥89.9",
     "sec_price_int": "39",
     "sec_price_decimal": ".9",
 
@@ -60,7 +60,7 @@
     "gift_remark": "单笔订单限赠1份，送完即止",
     "gift_value": "45",
 
-    "original_price": "69",
+    "original_price": "京东价:￥69",
     "sec_price_int": "39",
     "sec_price_decimal": ".0",
 
@@ -83,7 +83,7 @@
     "gift_remark": "活动名额有限 赠完即止",
     "gift_value": "39.9",
 
-    "original_price": "99",
+    "original_price": "京东价:￥99",
     "sec_price_int": "49",
     "sec_price_decimal": ".9",
 
@@ -106,11 +106,11 @@
     "gift_remark": "会员专享赠品，提前加入会员",
     "gift_value": "35",
 
-    "original_price": "99.9",
+    "original_price": "京东价:￥99.9",
     "sec_price_int": "59",
     "sec_price_decimal": ".9",
 
     "date_range": "7月1日-7月15日",
-    "sales_point": "深度清洁 不拔干"
+    "sales_point": "深度清洁 不紧绷干"
   }
 ]

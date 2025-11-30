@@ -1,0 +1,32 @@
+[
+  {
+    "id": "dove_01",
+    "activity_name": "大牌礼遇日",
+    "main_title": "大师奢香 一洗顺滑",
+    "promo_text": "第2件半价，叠券再减40元",
+    "price": "89.9",
+    "price_extra": "日常价¥129，活动时间 11.27-11.30",
+    "product_image": "img_001.png"
+  },
+  {
+    "id": "dove_02",
+    "activity_name": "年终焕新季",
+    "main_title": "一抹修护 干枯救星",
+    "promo_text": "满199减80，再叠店铺券",
+    "price": "109",
+    "price_extra": "",
+    "product_image": "img_002.png"
+  },
+  {
+    "id": "dove_03",
+    "activity_name": "限时特惠",
+    "main_title": "深层滋养 柔顺到底",
+    "promo_text": "买3送1，限时3天",
+    "price": "79.9",
+    "price_extra": "原价¥99",
+    "product_image": "img_003.png"
+  }
+]
+
+
+

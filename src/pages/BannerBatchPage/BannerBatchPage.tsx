@@ -1154,8 +1154,14 @@ export const BannerBatchPage: React.FC = () => {
   return (
     <div className="banner-batch-page">
       <div className="banner-batch-header">
-        <h1>Kaytune FluidDAM - 广告模板批量编辑工具</h1>
-        <p className="subtitle">上传 ZIP 模板文件，实时预览模板效果</p>
+        <div className="header-logo">
+          <img 
+            src="/banner_demo/image/kaytuneai logo.png" 
+            alt="KaytuneAI Logo" 
+            className="logo-image"
+          />
+        </div>
+        <h1>FluidDAM - 广告模板批量编辑工具</h1>
       </div>
 
       <div className="banner-batch-content">
@@ -1200,7 +1206,7 @@ export const BannerBatchPage: React.FC = () => {
             <div className="template-upload-section">
               <h4>上传模板 ZIP（推荐）</h4>
               <p className="template-upload-hint">
-                上传包含 HTML、CSS 和图片的 ZIP 文件，系统会自动将资源转为 Base64 内联
+                上传包含 HTML、CSS 和图片的 ZIP 文件
               </p>
               <label className="template-upload-label">
                 <input
@@ -1396,7 +1402,7 @@ export const BannerBatchPage: React.FC = () => {
           <div className="control-section">
             <h3>使用说明</h3>
             <div className="info-text">
-              <p>1. 上传 ZIP 模板文件（包含 HTML、CSS 和图片，系统会自动转为 Base64 内联）</p>
+              <p>1. 上传 ZIP 模板文件（包含 HTML、CSS 和图片）</p>
               <p>2. ZIP 中可包含 JSON 数据文件，会自动加载；也可单独上传 JSON 文件</p>
               <p>3. 使用左右按钮切换预览不同数据</p>
               <p>4. 点击"一键生成"批量导出 PNG</p>

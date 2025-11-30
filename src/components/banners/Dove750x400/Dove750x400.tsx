@@ -9,7 +9,8 @@ interface Props {
 
 export const Dove750x400: React.FC<Props> = ({ fields, imageUrlResolver }) => {
   const productImageSrc =
-    imageUrlResolver?.(fields.product_image) ?? fields.product_image;
+    imageUrlResolver?.(String(fields.product_image ?? "")) ??
+    String(fields.product_image ?? "");
 
   return (
     <div className="banner banner-dove-750x400">
@@ -35,7 +36,7 @@ export const Dove750x400: React.FC<Props> = ({ fields, imageUrlResolver }) => {
       )}
       <img
         className="banner-product"
-        src={productImageSrc}
+        src={String(productImageSrc)}
         alt="product"
         onError={(e) => {
           // 如果图片加载失败，显示占位符

@@ -3,8 +3,10 @@ import { BannerBatchPage } from "./pages/BannerBatchPage";
 import "./App.css";
 
 function App() {
+  const basename = import.meta.env.MODE === 'production' ? '/bannergen' : '';
+  
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={basename}>
       <Routes>
         <Route path="/" element={<Navigate to="/banner-batch" replace />} />
         <Route path="/banner-batch" element={<BannerBatchPage />} />

@@ -81,8 +81,8 @@ export const BannerBatchPage: React.FC = () => {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- 关键修复：使所有相对路径映射到 public/banner_demo/ -->
-    <base href="/banner_demo/">
+    <!-- 关键修复：使所有相对路径映射到 public/ -->
+    <base href="/">
     ${linkTags ? `    ${linkTags}\n    ` : ""}${css ? `<style>${css}</style>` : ""}
     <style>
       /* 字段高亮样式 */
@@ -114,7 +114,7 @@ export const BannerBatchPage: React.FC = () => {
     }
 
     // 提取 <link rel="stylesheet"> 标签（注意：这里只是记录，实际 CSS 内容需要从文件读取）
-    // 由于我们在 iframe 中使用 <base href="/banner_demo/">，link 标签的 href 会自动解析
+    // 由于我们在 iframe 中使用 <base href="/">，link 标签的 href 会自动解析
     // 所以不需要额外处理，link 标签会在 HTML 中保留
 
     return extractedCss.trim();
@@ -1156,7 +1156,7 @@ export const BannerBatchPage: React.FC = () => {
       <div className="banner-batch-header">
         <div className="header-logo">
           <img 
-            src="/banner_demo/image/kaytuneai logo.png" 
+            src="/image/kaytuneai logo.png" 
             alt="KaytuneAI Logo" 
             className="logo-image"
           />

@@ -76,13 +76,14 @@ export const BannerBatchPage: React.FC = () => {
       // 如果都没有，直接使用原始内容
     }
 
+    const baseUrl = import.meta.env.BASE_URL;
     return `<!DOCTYPE html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- 关键修复：使所有相对路径映射到 public/ -->
-    <base href="/">
+    <!-- 关键修复：使所有相对路径映射到正确的 base 路径 -->
+    <base href="${baseUrl}">
     ${linkTags ? `    ${linkTags}\n    ` : ""}${css ? `<style>${css}</style>` : ""}
     <style>
       /* 字段高亮样式 */
@@ -114,7 +115,7 @@ export const BannerBatchPage: React.FC = () => {
     }
 
     // 提取 <link rel="stylesheet"> 标签（注意：这里只是记录，实际 CSS 内容需要从文件读取）
-    // 由于我们在 iframe 中使用 <base href="/">，link 标签的 href 会自动解析
+    // 由于我们在 iframe 中使用 <base href>，link 标签的 href 会自动解析到正确的 base 路径
     // 所以不需要额外处理，link 标签会在 HTML 中保留
 
     return extractedCss.trim();
@@ -1156,7 +1157,7 @@ export const BannerBatchPage: React.FC = () => {
       <div className="banner-batch-header">
         <div className="header-logo">
           <img 
-            src="/image/kaytuneai logo.png" 
+            src={`${import.meta.env.BASE_URL}image/kaytuneai logo.png`}
             alt="KaytuneAI Logo" 
             className="logo-image"
           />

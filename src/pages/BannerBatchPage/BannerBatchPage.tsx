@@ -1193,8 +1193,8 @@ export const BannerBatchPage: React.FC = () => {
               />
             ) : (
               <div className="banner-placeholder">
-                <p>请先上传 ZIP 模板文件</p>
-                <p className="hint">点击下方按钮上传包含 HTML、CSS 和图片的 ZIP 文件</p>
+                <p>上传 ZIP 模板文件</p>
+                <p className="hint">包含 HTML、CSS、图片和Json替换文件的 ZIP 文件</p>
               </div>
             )}
           </div>
@@ -1205,9 +1205,9 @@ export const BannerBatchPage: React.FC = () => {
             
             {/* ZIP 上传区域 */}
             <div className="template-upload-section">
-              <h4>上传模板 ZIP（推荐）</h4>
+              <h3>上传模板（包含 HTML、CSS、图片和Json替换文件的 ZIP 文件）</h3>
               <p className="template-upload-hint">
-                上传包含 HTML、CSS 和图片的 ZIP 文件
+                <br></br>
               </p>
               <label className="template-upload-label">
                 <input

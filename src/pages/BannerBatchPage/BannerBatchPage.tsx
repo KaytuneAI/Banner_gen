@@ -297,10 +297,10 @@ export const BannerBatchPage: React.FC = () => {
     );
   };
 
-  // 替换 CSS 中的 url(...) 为 Base64
+  // 替换 CSS 中的 url(...) 为 Base64（支持图片和字体）
   const replaceCssUrlWithBase64 = (
     css: string,
-    imageMap: Record<string, string>
+    resourceMap: Record<string, string>
   ): string => {
     return css.replace(/url\(["']?([^"')]+)["']?\)/gi, (match, urlPath) => {
       // 跳过已经是 data URL 或 http(s) 的链接
@@ -310,7 +310,7 @@ export const BannerBatchPage: React.FC = () => {
 
       // 标准化路径
       const normalizedPath = urlPath.replace(/^\.\//, "").replace(/^\.\.\//, "");
-      const dataUrl = imageMap[urlPath] || imageMap[normalizedPath] || imageMap["./" + normalizedPath];
+      const dataUrl = resourceMap[urlPath] || resourceMap[normalizedPath] || resourceMap["./" + normalizedPath] || resourceMap[normalizedPath.split("/").pop() || ""];
 
       if (!dataUrl) {
         return match;
@@ -372,10 +372,11 @@ export const BannerBatchPage: React.FC = () => {
     try {
       const zip = await JSZip.loadAsync(file);
 
-      // 1. 找到 html、css、图片文件、JSON 文件
+      // 1. 找到 html、css、图片文件、字体文件、JSON 文件
       const htmlFiles: JSZip.JSZipObject[] = [];
       const cssFiles: JSZip.JSZipObject[] = [];
       const imageFiles: JSZip.JSZipObject[] = [];
+      const fontFiles: JSZip.JSZipObject[] = [];
       const jsonFiles: JSZip.JSZipObject[] = [];
 
       zip.forEach((relativePath, entry) => {
@@ -397,6 +398,14 @@ export const BannerBatchPage: React.FC = () => {
           lower.endsWith(".svg")
         ) {
           imageFiles.push(entry);
+        } else if (
+          lower.endsWith(".ttf") ||
+          lower.endsWith(".otf") ||
+          lower.endsWith(".woff") ||
+          lower.endsWith(".woff2") ||
+          lower.endsWith(".eot")
+        ) {
+          fontFiles.push(entry);
         }
       });
 
@@ -423,7 +432,49 @@ export const BannerBatchPage: React.FC = () => {
         cssText += "\n" + cssPart;
       }
 
-      // 4. 构建图片路径 -> Base64 data URL 映射
+      // 4. 构建字体路径 -> Base64 data URL 映射
+      const fontMap: Record<string, string> = {};
+      for (const fontEntry of fontFiles) {
+        // 注意：JSZip 中的 name 是 zip 内相对路径，例如 "sample_ponds-1202/fonts/FZZCHJ.OTF"
+        const ext = fontEntry.name.toLowerCase().split(".").pop() || "ttf";
+        let mime = "font/ttf";
+        
+        if (ext === "otf") {
+          mime = "font/opentype";
+        } else if (ext === "woff") {
+          mime = "font/woff";
+        } else if (ext === "woff2") {
+          mime = "font/woff2";
+        } else if (ext === "eot") {
+          mime = "application/vnd.ms-fontobject";
+        } else if (ext === "ttf") {
+          mime = "font/ttf";
+        }
+
+        const base64 = await fontEntry.async("base64");
+        const dataUrl = `data:${mime};base64,${base64}`;
+
+        // 存多种 key：原始路径、去掉前导 "./"、添加 "./"
+        const normPath = fontEntry.name.replace(/^\.\//, "");
+        fontMap[fontEntry.name] = dataUrl;
+        fontMap[normPath] = dataUrl;
+        fontMap["./" + normPath] = dataUrl;
+        
+        // 计算相对于HTML文件所在目录的路径
+        if (htmlDir && fontEntry.name.startsWith(htmlDirWithSlash)) {
+          const relativePath = fontEntry.name.substring(htmlDir.length + 1);
+          fontMap[relativePath] = dataUrl;
+          fontMap["./" + relativePath] = dataUrl;
+        }
+        
+        // 也支持文件名匹配（只匹配文件名，不包含路径）
+        const fileName = normPath.split("/").pop() || normPath;
+        if (fileName !== normPath) {
+          fontMap[fileName] = dataUrl;
+        }
+      }
+
+      // 5. 构建图片路径 -> Base64 data URL 映射
       const imageMap: Record<string, string> = {};
       for (const imgEntry of imageFiles) {
         // 注意：JSZip 中的 name 是 zip 内相对路径，例如 "sample_ponds-1202/image/bg.png"
@@ -465,14 +516,17 @@ export const BannerBatchPage: React.FC = () => {
         }
       }
 
-      // 5. 替换 HTML 与 CSS 中的图片路径为 Base64
-      const processedHtml = replaceHtmlImgSrcWithBase64(rawHtml, imageMap);
-      const processedCss = replaceCssUrlWithBase64(cssText, imageMap);
+      // 6. 合并图片和字体映射，用于 CSS 中的 url() 替换
+      const resourceMap: Record<string, string> = { ...imageMap, ...fontMap };
 
-      // 6. 生成最终 HTML，用于 iframe srcDoc（所有资源已内联，不需要 base 标签）
+      // 7. 替换 HTML 与 CSS 中的图片路径为 Base64
+      const processedHtml = replaceHtmlImgSrcWithBase64(rawHtml, imageMap);
+      const processedCss = replaceCssUrlWithBase64(cssText, resourceMap);
+
+      // 8. 生成最终 HTML，用于 iframe srcDoc（所有资源已内联，不需要 base 标签）
       const finalHtml = buildInlineHtml(processedHtml, processedCss);
 
-      // 7. 解析 data-field / data-label（沿用现有逻辑）
+      // 9. 解析 data-field / data-label（沿用现有逻辑）
       const parser = new DOMParser();
       const doc = parser.parseFromString(finalHtml, "text/html");
 
@@ -499,7 +553,7 @@ export const BannerBatchPage: React.FC = () => {
         }
       });
 
-      // 8. 处理 JSON 数据文件（如果存在）
+      // 10. 处理 JSON 数据文件（如果存在）
       if (jsonFiles.length > 0) {
         try {
           // 优先查找常见的 JSON 文件名（data.json, test.json 等）
@@ -521,7 +575,21 @@ export const BannerBatchPage: React.FC = () => {
             // 遍历所有字段，查找图片路径并替换
             Object.keys(processedItem).forEach((key) => {
               const value = processedItem[key];
-              if (typeof value === "string" && value) {
+              
+              // 处理数组类型的图片路径（如 product_main_src, gift_products_src）
+              if (Array.isArray(value)) {
+                const processedArray = value.map((path: string) => {
+                  if (typeof path === "string" && path) {
+                    const normalizedPath = path.replace(/^\.\//, "");
+                    const base64Url = imageMap[path] || imageMap[normalizedPath] || imageMap["./" + normalizedPath] || imageMap[normalizedPath.split("/").pop() || ""];
+                    return base64Url || path;  // 如果找不到 base64，保持原路径
+                  }
+                  return path;
+                });
+                processedItem[key] = processedArray;
+              }
+              // 处理字符串类型的图片路径
+              else if (typeof value === "string" && value) {
                 // 检查是否是图片路径（相对路径或文件名）
                 const normalizedPath = value.replace(/^\.\//, "");
                 const base64Url = imageMap[value] || imageMap[normalizedPath] || imageMap["./" + normalizedPath] || imageMap[normalizedPath.split("/").pop() || ""];
@@ -564,6 +632,9 @@ export const BannerBatchPage: React.FC = () => {
       }
       if (imageFiles.length > 0) {
         successMsg += ` (图片: ${imageFiles.length} 个，已转为 Base64 内联)`;
+      }
+      if (fontFiles.length > 0) {
+        successMsg += ` (字体: ${fontFiles.length} 个，已转为 Base64 内联)`;
       }
       if (jsonFiles.length > 0) {
         successMsg += ` (JSON: ${jsonFiles.length} 个文件，已自动加载数据)`;
@@ -638,8 +709,8 @@ export const BannerBatchPage: React.FC = () => {
             decValue = (priceDecimal2?.textContent || priceDecimal3?.textContent || '').trim();
           } else {
             // 回退到旧逻辑：sign 后的文本节点 + .decimal span
-            const signNode = priceEl.querySelector('.sign');
-            const decimalNode = priceEl.querySelector('.decimal');
+          const signNode = priceEl.querySelector('.sign');
+          const decimalNode = priceEl.querySelector('.decimal');
             intValue = signNode?.nextSibling?.nodeValue || '';
             decValue = decimalNode?.textContent || '';
           }
@@ -866,7 +937,7 @@ export const BannerBatchPage: React.FC = () => {
 
           let currentIntValue = (priceInt2?.textContent || priceInt3?.textContent || '').trim();
           let currentDecValue = (priceDecimal2?.textContent || priceDecimal3?.textContent || '').trim();
-
+          
           // 如果没有找到新结构，尝试从旧结构读取
           if (!currentIntValue && !currentDecValue) {
             const signNode = priceEl.querySelector('.sign');
@@ -981,11 +1052,171 @@ export const BannerBatchPage: React.FC = () => {
         updatePriceFields(iframeDoc, intValue, decimalValue);
       }
 
-      // 遍历所有字段，更新对应元素（跳过价格字段，已特殊处理）
+      // 特殊处理主产品图片数组（product_main_src）
+      // 复用模板里的 <img> 结构，只改 src，保持原有样式和布局
+      if (data.product_main_src !== undefined) {
+        const productContainer = iframeDoc.querySelector(".product") as HTMLElement;
+        if (productContainer) {
+          // 获取原始图片节点（模板里的）
+          const templateImgs = Array.from(productContainer.querySelectorAll("img")) as HTMLImageElement[];
+
+          // 获取图片源（支持字符串或数组）
+          let baseImgs: string[] = [];
+          const rawValue = edits.product_main_src !== undefined ? edits.product_main_src : data.product_main_src;
+          
+          if (Array.isArray(rawValue)) {
+            baseImgs = rawValue.map(v => String(v));
+          } else if (rawValue) {
+            baseImgs = [String(rawValue)];
+          }
+
+          // 获取数量（qty），如果没有则默认为 1
+          const qtyValue = edits.product_main_qty !== undefined ? edits.product_main_qty : data.product_main_qty;
+          const qty = qtyValue !== undefined ? Number(qtyValue) : (baseImgs.length || 1);
+          
+          // 根据 qty 复制图片
+          let imgs: string[] = [];
+          if (baseImgs.length > 0) {
+            // 如果 baseImgs 只有一张，根据 qty 复制
+            if (baseImgs.length === 1) {
+              imgs = Array(qty).fill(baseImgs[0]);
+            } else {
+              // 如果 baseImgs 是多张，使用前 qty 张（或全部，取较小值）
+              imgs = baseImgs.slice(0, Math.max(1, qty));
+            }
+          }
+
+          // 如果模板里本来就有 img，用它们当"样板"
+          if (templateImgs.length > 0) {
+            // 先确保至少有 imgs.length 个 img 节点，不够就 clone 最后一个
+            while (templateImgs.length < imgs.length) {
+              const lastImg = templateImgs[templateImgs.length - 1];
+              const clone = lastImg.cloneNode(true) as HTMLImageElement;
+              productContainer.appendChild(clone);
+              templateImgs.push(clone);
+            }
+
+            // 给前 imgs.length 个节点设置 src，并显示出来
+            imgs.forEach((src, idx) => {
+              const img = templateImgs[idx];
+              img.src = src;
+              img.style.display = ""; // 恢复显示（清除可能的 display: none）
+              // 保持原有的 class、style、data-field 等属性，不覆盖
+            });
+
+            // 多余的模板节点隐藏掉
+            for (let i = imgs.length; i < templateImgs.length; i++) {
+              const img = templateImgs[i];
+              img.style.display = "none";
+            }
+          } else {
+            // 万一模板里一个 img 都没有，再退回到"新建 img"的方案
+            productContainer.innerHTML = "";
+            imgs.forEach((src) => {
+              const img = iframeDoc.createElement("img");
+              img.src = src;
+              img.alt = "主产品";
+              img.setAttribute("data-field", "product_main_src");
+              img.setAttribute("data-label", "主产品图片");
+              productContainer.appendChild(img);
+            });
+          }
+        }
+      }
+
+      // 特殊处理赠品图片（支持 gift_products_src 数组或 gift_products_src_1 + qty）
+      // 优先检查 gift_products_src（数组形式）
+      if (data.gift_products_src !== undefined) {
+        const giftContainer = iframeDoc.querySelector(".giftproducts") as HTMLElement;
+        if (giftContainer) {
+          // 获取图片数组（支持字符串或数组）
+          let baseImgs: string[] = [];
+          const rawValue = edits.gift_products_src !== undefined ? edits.gift_products_src : data.gift_products_src;
+          
+          if (Array.isArray(rawValue)) {
+            baseImgs = rawValue.map(v => String(v));
+          } else if (rawValue) {
+            baseImgs = [String(rawValue)];
+          }
+
+          // 获取数量（qty），如果没有则默认为 1
+          const qtyValue = edits.gift_products_qty !== undefined ? edits.gift_products_qty : data.gift_products_qty;
+          const qty = qtyValue !== undefined ? Number(qtyValue) : 1;
+          
+          // 根据 qty 复制图片
+          let imgs: string[] = [];
+          if (baseImgs.length > 0) {
+            if (baseImgs.length === 1) {
+              imgs = Array(qty).fill(baseImgs[0]);
+            } else {
+              imgs = baseImgs.slice(0, Math.max(1, qty));
+            }
+          }
+
+          // 清空旧 DOM，避免残留
+          giftContainer.innerHTML = "";
+
+          // 根据数量确定 class（1张、2张、3张）
+          const count = imgs.length;
+          const className = `giftproductsimg-${count}`;
+
+          // 动态创建图片元素
+          imgs.forEach((src, idx) => {
+            const img = iframeDoc.createElement("img");
+            img.src = src;  // src 已经是 base64 或完整路径
+            img.alt = `赠品${idx + 1}`;
+            img.className = className;  // 使用 giftproductsimg-1/2/3
+            img.setAttribute("data-field", `gift_products_src_${idx + 1}`);
+            img.setAttribute("data-label", `赠品图片${idx + 1}`);
+            giftContainer.appendChild(img);
+          });
+        }
+      }
+      // 如果没有 gift_products_src，尝试使用 gift_products_src_1 + gift_products_qty_1
+      else if (data.gift_products_src_1 !== undefined) {
+        const giftContainer = iframeDoc.querySelector(".giftproducts") as HTMLElement;
+        if (giftContainer) {
+          // 获取第一张赠品图片
+          const giftSrc1 = edits.gift_products_src_1 !== undefined ? edits.gift_products_src_1 : data.gift_products_src_1;
+          
+          // 获取数量（gift_products_qty_1），如果没有则默认为 1
+          const qtyValue = edits.gift_products_qty_1 !== undefined ? edits.gift_products_qty_1 : data.gift_products_qty_1;
+          const qty = qtyValue !== undefined ? Number(qtyValue) : 1;
+          
+          // 根据 qty 复制图片
+          const imgs: string[] = Array(qty).fill(String(giftSrc1));
+
+          // 清空旧 DOM，避免残留
+          giftContainer.innerHTML = "";
+
+          // 根据数量确定 class（1张、2张、3张）
+          const count = imgs.length;
+          const className = `giftproductsimg-${count}`;
+
+          // 动态创建图片元素
+          imgs.forEach((src, idx) => {
+            const img = iframeDoc.createElement("img");
+            img.src = src;  // src 已经是 base64 或完整路径
+            img.alt = `赠品${idx + 1}`;
+            img.className = className;  // 使用 giftproductsimg-1/2/3
+            img.setAttribute("data-field", `gift_products_src_${idx + 1}`);
+            img.setAttribute("data-label", `赠品图片${idx + 1}`);
+            giftContainer.appendChild(img);
+          });
+        }
+      }
+
+      // 遍历所有字段，更新对应元素（跳过价格字段和已特殊处理的数组字段）
       Object.entries(data).forEach(([fieldName, value]) => {
         if (value === undefined || value === null) return;
-        // 跳过价格字段
-        if (fieldName === 'sec_price_int' || fieldName === 'sec_price_decimal') return;
+        // 跳过价格字段和数组字段（已特殊处理）
+        if (fieldName === 'sec_price_int' || 
+            fieldName === 'sec_price_decimal' || 
+            fieldName === 'product_main_src' || 
+            fieldName === 'gift_products_src') return;
+
+        // 如果是数组类型，跳过（由上面的特殊处理逻辑处理）
+        if (Array.isArray(value)) return;
 
         const element = iframeDoc.querySelector(`[data-field="${fieldName}"]`) as HTMLElement;
         if (element) {
@@ -1002,14 +1233,22 @@ export const BannerBatchPage: React.FC = () => {
       });
       
       // 应用编辑值中可能存在的额外字段（不在 JSON 中的）
+      // 注意：数组字段（product_main_src, gift_products_src）已在上面特殊处理，这里跳过
       Object.entries(edits).forEach(([fieldName, value]) => {
-        if (data[fieldName] === undefined && fieldName !== 'sec_price_int' && fieldName !== 'sec_price_decimal') {
+        if (data[fieldName] === undefined && 
+            fieldName !== 'sec_price_int' && 
+            fieldName !== 'sec_price_decimal' &&
+            fieldName !== 'product_main_src' &&
+            fieldName !== 'gift_products_src') {
           const element = iframeDoc.querySelector(`[data-field="${fieldName}"]`) as HTMLElement;
           if (element) {
+            // 跳过数组类型的编辑值（应该通过特殊处理逻辑处理）
+            if (Array.isArray(value)) return;
+            
             if (element.tagName === "IMG") {
-              (element as HTMLImageElement).src = value;
+              (element as HTMLImageElement).src = String(value);
             } else {
-              element.textContent = value;
+              element.textContent = String(value);
             }
           }
         }
@@ -1059,30 +1298,30 @@ export const BannerBatchPage: React.FC = () => {
           }
         } else {
           // 对于其他索引，正常应用 JSON 数据
-          applyJsonDataToIframe(jsonData[currentIndex], currentIndex);
-          
-          // 恢复当前索引的选中字段值（如果有编辑过）
-          if (selectedField) {
-            const edits = editedValues[currentIndex];
-            if (edits && edits[selectedField] !== undefined) {
-              setSelectedFieldValue(edits[selectedField]);
-            } else {
-              // 从 iframe 中读取当前值
-              if (iframeRef.current) {
-                try {
-                  const iframeDoc = iframeRef.current.contentDocument || iframeRef.current.contentWindow?.document;
-                  if (iframeDoc) {
-                    const element = iframeDoc.querySelector(`[data-field="${selectedField}"]`) as HTMLElement;
-                    if (element) {
-                      if (element.tagName === "IMG") {
-                        setSelectedFieldValue((element as HTMLImageElement).src || "");
-                      } else {
-                        setSelectedFieldValue(element.textContent?.trim() || "");
-                      }
+        applyJsonDataToIframe(jsonData[currentIndex], currentIndex);
+        
+        // 恢复当前索引的选中字段值（如果有编辑过）
+        if (selectedField) {
+          const edits = editedValues[currentIndex];
+          if (edits && edits[selectedField] !== undefined) {
+            setSelectedFieldValue(edits[selectedField]);
+          } else {
+            // 从 iframe 中读取当前值
+            if (iframeRef.current) {
+              try {
+                const iframeDoc = iframeRef.current.contentDocument || iframeRef.current.contentWindow?.document;
+                if (iframeDoc) {
+                  const element = iframeDoc.querySelector(`[data-field="${selectedField}"]`) as HTMLElement;
+                  if (element) {
+                    if (element.tagName === "IMG") {
+                      setSelectedFieldValue((element as HTMLImageElement).src || "");
+                    } else {
+                      setSelectedFieldValue(element.textContent?.trim() || "");
                     }
                   }
-                } catch (e) {
-                  // 忽略错误
+                }
+              } catch (e) {
+                // 忽略错误
                 }
               }
             }

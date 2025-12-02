@@ -273,11 +273,22 @@ export const BannerBatchPage: React.FC = () => {
           return match;
         }
 
-        // 标准化路径（去掉前导 ./ 和 ..）
+        // 尝试多种路径格式匹配
         const normalizedPath = src.replace(/^\.\//, "").replace(/^\.\.\//, "");
-        const dataUrl = imageMap[src] || imageMap[normalizedPath] || imageMap["./" + normalizedPath];
+        const fileName = normalizedPath.split("/").pop() || normalizedPath;
+        
+        // 按优先级尝试匹配
+        const dataUrl = 
+          imageMap[src] ||                              // 原始路径
+          imageMap[normalizedPath] ||                    // 去掉 ./ 的路径
+          imageMap["./" + normalizedPath] ||            // 添加 ./ 的路径
+          imageMap[fileName] ||                          // 仅文件名
+          (normalizedPath.startsWith("/") ? imageMap[normalizedPath.substring(1)] : null); // 去掉前导 /
 
         if (!dataUrl) {
+          console.warn(`图片路径未匹配到base64: ${src}`, {
+            availableKeys: Object.keys(imageMap).filter(k => k.includes(fileName))
+          });
           return match; // 没有匹配上就保持原样（可能是外链图）
         }
 
@@ -400,6 +411,10 @@ export const BannerBatchPage: React.FC = () => {
         htmlFiles[0];
 
       const rawHtml = await mainHtmlEntry.async("text");
+      
+      // 获取HTML文件所在目录（用于计算相对路径）
+      const htmlDir = mainHtmlEntry.name.split("/").slice(0, -1).join("/");
+      const htmlDirWithSlash = htmlDir ? htmlDir + "/" : "";
 
       // 3. 合并所有 css 文件内容
       let cssText = "";
@@ -411,7 +426,7 @@ export const BannerBatchPage: React.FC = () => {
       // 4. 构建图片路径 -> Base64 data URL 映射
       const imageMap: Record<string, string> = {};
       for (const imgEntry of imageFiles) {
-        // 注意：JSZip 中的 name 是 zip 内相对路径，例如 "image/bg.png"
+        // 注意：JSZip 中的 name 是 zip 内相对路径，例如 "sample_ponds-1202/image/bg.png"
         const ext = imgEntry.name.toLowerCase().split(".").pop() || "png";
         let mime = "image/png";
         
@@ -433,6 +448,16 @@ export const BannerBatchPage: React.FC = () => {
         imageMap[imgEntry.name] = dataUrl;
         imageMap[normPath] = dataUrl;
         imageMap["./" + normPath] = dataUrl;
+        
+        // 计算相对于HTML文件所在目录的路径
+        // 例如：HTML在 "sample_ponds-1202/test.html"，图片在 "sample_ponds-1202/image/product.png"
+        // 则相对路径为 "./image/product.png"
+        if (htmlDir && imgEntry.name.startsWith(htmlDirWithSlash)) {
+          const relativePath = imgEntry.name.substring(htmlDir.length + 1);
+          imageMap[relativePath] = dataUrl;
+          imageMap["./" + relativePath] = dataUrl;
+        }
+        
         // 也支持文件名匹配（只匹配文件名，不包含路径）
         const fileName = normPath.split("/").pop() || normPath;
         if (fileName !== normPath) {
@@ -510,16 +535,13 @@ export const BannerBatchPage: React.FC = () => {
             return processedItem;
           });
 
-          setJsonData(processedData);
+          // 如果zip文件里有json文件，第一个渲染html的内容（不应用json数据）
+          // json的替换素材从第二个开始
+          const dataWithEmptyFirst: BannerData[] = [{} as BannerData, ...processedData];
+          setJsonData(dataWithEmptyFirst);
           setCurrentIndex(0);
           
-          // 应用第一条数据到预览
-          if (processedData.length > 0) {
-            // 延迟应用，确保 HTML 已设置
-            setTimeout(() => {
-              applyJsonDataToIframe(processedData[0], 0);
-            }, 100);
-          }
+          // 不自动应用数据，让第一个显示纯模板
         } catch (jsonErr) {
           console.warn("解析 ZIP 中的 JSON 文件失败:", jsonErr);
           // JSON 解析失败不影响模板加载，只记录警告
@@ -601,11 +623,26 @@ export const BannerBatchPage: React.FC = () => {
         if (priceEl) {
           priceEl.classList.add("field-highlight");
           
-          // 获取价格值
-          const signNode = priceEl.querySelector('.sign');
-          const decimalNode = priceEl.querySelector('.decimal');
-          const intValue = signNode?.nextSibling?.nodeValue || '';
-          const decValue = decimalNode?.textContent || '';
+          // 优先查找新的价格结构：.price-int-2, .price-int-3 和 .price-decimal-2, .price-decimal-3
+          const priceInt2 = priceEl.querySelector('.price-int-2') as HTMLElement;
+          const priceInt3 = priceEl.querySelector('.price-int-3') as HTMLElement;
+          const priceDecimal2 = priceEl.querySelector('.price-decimal-2') as HTMLElement;
+          const priceDecimal3 = priceEl.querySelector('.price-decimal-3') as HTMLElement;
+
+          let intValue = '';
+          let decValue = '';
+
+          if (priceInt2 || priceInt3 || priceDecimal2 || priceDecimal3) {
+            // 使用新的价格结构
+            intValue = (priceInt2?.textContent || priceInt3?.textContent || '').trim();
+            decValue = (priceDecimal2?.textContent || priceDecimal3?.textContent || '').trim();
+          } else {
+            // 回退到旧逻辑：sign 后的文本节点 + .decimal span
+            const signNode = priceEl.querySelector('.sign');
+            const decimalNode = priceEl.querySelector('.decimal');
+            intValue = signNode?.nextSibling?.nodeValue || '';
+            decValue = decimalNode?.textContent || '';
+          }
           
           setSelectedFieldValue(fieldName === 'sec_price_int' ? intValue : decValue);
           
@@ -675,6 +712,130 @@ export const BannerBatchPage: React.FC = () => {
     }
   };
 
+  // 更新价格字段（特殊处理，因为价格结构特殊）
+  // 统一价格系统：根据整数位数自动切换 class，确保 DOM 结构统一
+  const updatePriceFields = useCallback((iframeDoc: Document, intValue: string, decimalValue: string) => {
+    const priceEl = iframeDoc.querySelector('[data-field-int]') as HTMLElement;
+    if (!priceEl) return;
+
+    // 根据整数位数决定使用 2 位还是 3 位样式
+    const intLength = intValue.length;
+    const is2Digits = intLength <= 2;
+    const targetIntClass = is2Digits ? 'price-int-2' : 'price-int-3';
+    const targetDecimalClass = is2Digits ? 'price-decimal-2' : 'price-decimal-3';
+    const targetBaseClass = is2Digits ? 'price--2digits' : 'price--3digits';
+
+    // 同步更新外层 base class（price--2digits / price--3digits）
+    priceEl.classList.remove('price--2digits', 'price--3digits');
+    priceEl.classList.add(targetBaseClass);
+
+    // 查找或创建整数 span
+    let priceIntSpan = priceEl.querySelector('.price-int-2') as HTMLElement || 
+                       priceEl.querySelector('.price-int-3') as HTMLElement;
+    
+    if (!priceIntSpan) {
+      // 如果不存在，创建新的整数 span
+      priceIntSpan = iframeDoc.createElement('span');
+      priceIntSpan.classList.add(targetIntClass);
+      
+      // 查找 sign 节点，在其后插入
+      const signNode = priceEl.querySelector('.sign');
+      if (signNode) {
+        // 查找 sign 后的第一个非 sign 节点
+        let insertBefore = signNode.nextSibling;
+        while (insertBefore && 
+               (insertBefore.nodeType === Node.TEXT_NODE || 
+                (insertBefore.nodeType === Node.ELEMENT_NODE && 
+                 (insertBefore as HTMLElement).classList.contains('sign')))) {
+          insertBefore = insertBefore.nextSibling;
+        }
+        if (insertBefore) {
+          priceEl.insertBefore(priceIntSpan, insertBefore);
+        } else {
+          priceEl.appendChild(priceIntSpan);
+        }
+      } else {
+        // 如果没有 sign，直接添加到开头
+        priceEl.insertBefore(priceIntSpan, priceEl.firstChild);
+      }
+    } else {
+      // 如果已存在，切换 class
+      priceIntSpan.classList.remove('price-int-2', 'price-int-3');
+      priceIntSpan.classList.add(targetIntClass);
+    }
+
+    // 更新整数内容
+    priceIntSpan.textContent = intValue;
+
+    // 查找或创建小数 span
+    let priceDecimalSpan = priceEl.querySelector('.price-decimal-2') as HTMLElement || 
+                           priceEl.querySelector('.price-decimal-3') as HTMLElement;
+    
+    if (!priceDecimalSpan) {
+      // 如果不存在，创建新的小数 span
+      priceDecimalSpan = iframeDoc.createElement('span');
+      priceDecimalSpan.classList.add(targetDecimalClass);
+      
+      // 在整数 span 后插入
+      if (priceIntSpan.nextSibling) {
+        priceEl.insertBefore(priceDecimalSpan, priceIntSpan.nextSibling);
+      } else {
+        priceEl.appendChild(priceDecimalSpan);
+      }
+    } else {
+      // 如果已存在，切换 class
+      priceDecimalSpan.classList.remove('price-decimal-2', 'price-decimal-3');
+      priceDecimalSpan.classList.add(targetDecimalClass);
+    }
+
+    // 更新小数内容
+    const finalDecimalValue = decimalValue.startsWith('.') ? decimalValue : '.' + decimalValue;
+    priceDecimalSpan.textContent = finalDecimalValue;
+
+    // 清理旧结构：删除 sign 后的文本节点和旧的 .decimal span
+    const signNode = priceEl.querySelector('.sign');
+    if (signNode) {
+      let node = signNode.nextSibling;
+      while (node) {
+        const nextSibling = node.nextSibling;
+        
+        // 删除文本节点（旧结构留下的）
+        if (node.nodeType === Node.TEXT_NODE && node.nodeValue?.trim()) {
+          node.remove();
+        }
+        // 删除或清空旧的 .decimal span（不是 price-decimal-*）
+        else if (node.nodeType === Node.ELEMENT_NODE) {
+          const el = node as HTMLElement;
+          if (el.classList.contains('decimal') && 
+              !el.classList.contains('price-decimal-2') && 
+              !el.classList.contains('price-decimal-3')) {
+            el.remove();
+          }
+        }
+        
+        node = nextSibling;
+      }
+    }
+
+    // 确保只有一个整数 span 和一个小数 span（清理多余的）
+    const allIntSpans = priceEl.querySelectorAll('.price-int-2, .price-int-3');
+    const allDecimalSpans = priceEl.querySelectorAll('.price-decimal-2, .price-decimal-3');
+    
+    if (allIntSpans.length > 1) {
+      // 保留第一个，删除其他的
+      for (let i = 1; i < allIntSpans.length; i++) {
+        allIntSpans[i].remove();
+      }
+    }
+    
+    if (allDecimalSpans.length > 1) {
+      // 保留第一个，删除其他的
+      for (let i = 1; i < allDecimalSpans.length; i++) {
+        allDecimalSpans[i].remove();
+      }
+    }
+  }, []);
+
   // 更新 iframe 中字段的值
   const updateFieldValue = useCallback((fieldName: string, newValue: string) => {
     if (!iframeRef.current) return;
@@ -697,31 +858,34 @@ export const BannerBatchPage: React.FC = () => {
             priceEl.classList.add("field-highlight");
           }
 
-          // 获取当前价格值
-          const currentInt = priceEl.getAttribute('data-field-int') === 'sec_price_int' 
-            ? (priceEl.querySelector('.sign')?.nextSibling?.nodeValue || '')
-            : '';
-          const currentDecimal = priceEl.querySelector('.decimal')?.textContent || '';
-          
-          // 更新对应的值
-          if (fieldName === 'sec_price_int') {
+          // 获取当前价格值（用于确定需要更新的值）
+          const priceInt2 = priceEl.querySelector('.price-int-2') as HTMLElement;
+          const priceInt3 = priceEl.querySelector('.price-int-3') as HTMLElement;
+          const priceDecimal2 = priceEl.querySelector('.price-decimal-2') as HTMLElement;
+          const priceDecimal3 = priceEl.querySelector('.price-decimal-3') as HTMLElement;
+
+          let currentIntValue = (priceInt2?.textContent || priceInt3?.textContent || '').trim();
+          let currentDecValue = (priceDecimal2?.textContent || priceDecimal3?.textContent || '').trim();
+
+          // 如果没有找到新结构，尝试从旧结构读取
+          if (!currentIntValue && !currentDecValue) {
             const signNode = priceEl.querySelector('.sign');
-            if (signNode && signNode.nextSibling && signNode.nextSibling.nodeType === Node.TEXT_NODE) {
-              signNode.nextSibling.nodeValue = newValue;
-            }
-          } else if (fieldName === 'sec_price_decimal') {
             const decimalNode = priceEl.querySelector('.decimal');
-            if (decimalNode) {
-              decimalNode.textContent = newValue.startsWith('.') ? newValue : '.' + newValue;
-            }
+            currentIntValue = signNode?.nextSibling?.nodeValue?.trim() || '';
+            currentDecValue = decimalNode?.textContent?.trim() || '';
           }
 
-          // 更新显示值（组合整数和小数）
-          const signNode = priceEl.querySelector('.sign');
-          const decimalNode = priceEl.querySelector('.decimal');
-          const intValue = signNode?.nextSibling?.nodeValue || '';
-          const decValue = decimalNode?.textContent || '';
-          setSelectedFieldValue(fieldName === 'sec_price_int' ? intValue : decValue);
+          // 确定要更新的值
+          let finalIntValue = fieldName === 'sec_price_int' ? newValue : currentIntValue;
+          let finalDecValue = fieldName === 'sec_price_decimal' 
+            ? (newValue.startsWith('.') ? newValue : '.' + newValue)
+            : currentDecValue;
+
+          // 使用 updatePriceFields 统一处理（会自动切换 class 和创建缺失的 span）
+          updatePriceFields(iframeDoc, finalIntValue, finalDecValue.replace(/^\./, ''));
+
+          // 更新显示值
+          setSelectedFieldValue(fieldName === 'sec_price_int' ? finalIntValue : finalDecValue);
         }
       } else {
         // 普通字段处理
@@ -761,7 +925,7 @@ export const BannerBatchPage: React.FC = () => {
     } catch (e) {
       console.warn("无法更新 iframe 内容:", e);
     }
-  }, [currentIndex]);
+  }, [currentIndex, updatePriceFields]);
 
   // 清除 CSS
   const handleClearCss = () => {
@@ -797,44 +961,6 @@ export const BannerBatchPage: React.FC = () => {
       jsonInputRef.current.value = "";
     }
   };
-
-  // 更新价格字段（特殊处理，因为价格结构特殊）
-  const updatePriceFields = useCallback((iframeDoc: Document, intValue: string, decimalValue: string) => {
-    const priceEl = iframeDoc.querySelector('[data-field-int]') as HTMLElement;
-    if (!priceEl) return;
-
-    const signNode = priceEl.querySelector('.sign');
-    const decimalNode = priceEl.querySelector('.decimal');
-
-    // 替换整数（sign 节点后的文本节点）
-    if (signNode) {
-      // 查找 sign 节点后的文本节点
-      let textNode = signNode.nextSibling;
-      while (textNode && textNode.nodeType !== Node.TEXT_NODE) {
-        textNode = textNode.nextSibling;
-      }
-      
-      if (textNode && textNode.nodeType === Node.TEXT_NODE) {
-        // 如果存在文本节点，直接更新
-        textNode.nodeValue = intValue;
-      } else {
-        // 如果没有文本节点，创建一个并插入
-        const newTextNode = iframeDoc.createTextNode(intValue);
-        if (decimalNode) {
-          priceEl.insertBefore(newTextNode, decimalNode);
-        } else {
-          priceEl.appendChild(newTextNode);
-        }
-      }
-    }
-
-    // 替换小数部分
-    if (decimalNode) {
-      decimalNode.textContent = decimalValue.startsWith('.')
-        ? decimalValue
-        : '.' + decimalValue;
-    }
-  }, []);
 
   // 将 JSON 数据应用到 iframe（会合并已编辑的值）
   const applyJsonDataToIframe = useCallback((data: BannerData, index: number) => {
@@ -897,30 +1023,67 @@ export const BannerBatchPage: React.FC = () => {
   useEffect(() => {
     if (jsonData.length > 0 && currentIndex >= 0 && currentIndex < jsonData.length) {
       const timer = setTimeout(() => {
-        applyJsonDataToIframe(jsonData[currentIndex], currentIndex);
-        
-        // 恢复当前索引的选中字段值（如果有编辑过）
-        if (selectedField) {
-          const edits = editedValues[currentIndex];
-          if (edits && edits[selectedField] !== undefined) {
-            setSelectedFieldValue(edits[selectedField]);
-          } else {
-            // 从 iframe 中读取当前值
-            if (iframeRef.current) {
-              try {
-                const iframeDoc = iframeRef.current.contentDocument || iframeRef.current.contentWindow?.document;
-                if (iframeDoc) {
-                  const element = iframeDoc.querySelector(`[data-field="${selectedField}"]`) as HTMLElement;
-                  if (element) {
-                    if (element.tagName === "IMG") {
-                      setSelectedFieldValue((element as HTMLImageElement).src || "");
-                    } else {
-                      setSelectedFieldValue(element.textContent?.trim() || "");
+        // 如果是第一个索引（索引0），且是空对象，重置 iframe 到原始 HTML 内容
+        if (currentIndex === 0 && Object.keys(jsonData[currentIndex]).length === 0) {
+          // 重新设置 iframe 的 srcdoc，重置到原始 HTML
+          if (iframeRef.current && htmlContent) {
+            iframeRef.current.srcdoc = buildSrcDoc(htmlContent, cssContent);
+            
+            // 等待 iframe 加载完成后，恢复选中字段的值（如果有）
+            const loadHandler = () => {
+              if (selectedField && iframeRef.current) {
+                try {
+                  const iframeDoc = iframeRef.current.contentDocument || iframeRef.current.contentWindow?.document;
+                  if (iframeDoc) {
+                    const element = iframeDoc.querySelector(`[data-field="${selectedField}"]`) as HTMLElement;
+                    if (element) {
+                      if (element.tagName === "IMG") {
+                        setSelectedFieldValue((element as HTMLImageElement).src || "");
+                      } else {
+                        setSelectedFieldValue(element.textContent?.trim() || "");
+                      }
                     }
                   }
+                } catch (e) {
+                  // 忽略错误
                 }
-              } catch (e) {
-                // 忽略错误
+              }
+              if (iframeRef.current) {
+                iframeRef.current.removeEventListener('load', loadHandler);
+              }
+            };
+            
+            if (iframeRef.current) {
+              iframeRef.current.addEventListener('load', loadHandler);
+            }
+          }
+        } else {
+          // 对于其他索引，正常应用 JSON 数据
+          applyJsonDataToIframe(jsonData[currentIndex], currentIndex);
+          
+          // 恢复当前索引的选中字段值（如果有编辑过）
+          if (selectedField) {
+            const edits = editedValues[currentIndex];
+            if (edits && edits[selectedField] !== undefined) {
+              setSelectedFieldValue(edits[selectedField]);
+            } else {
+              // 从 iframe 中读取当前值
+              if (iframeRef.current) {
+                try {
+                  const iframeDoc = iframeRef.current.contentDocument || iframeRef.current.contentWindow?.document;
+                  if (iframeDoc) {
+                    const element = iframeDoc.querySelector(`[data-field="${selectedField}"]`) as HTMLElement;
+                    if (element) {
+                      if (element.tagName === "IMG") {
+                        setSelectedFieldValue((element as HTMLImageElement).src || "");
+                      } else {
+                        setSelectedFieldValue(element.textContent?.trim() || "");
+                      }
+                    }
+                  }
+                } catch (e) {
+                  // 忽略错误
+                }
               }
             }
           }
@@ -928,7 +1091,7 @@ export const BannerBatchPage: React.FC = () => {
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [jsonData, currentIndex, applyJsonDataToIframe, selectedField, editedValues]);
+  }, [jsonData, currentIndex, applyJsonDataToIframe, selectedField, editedValues, htmlContent, cssContent]);
 
   // 切换到上一条
   const handlePrev = () => {
@@ -978,8 +1141,15 @@ export const BannerBatchPage: React.FC = () => {
     try {
       const zip = new JSZip();
       let successCount = 0;
+      let bannerIndex = 0; // 用于文件名的序号，从1开始
 
       for (let i = 0; i < jsonData.length; i++) {
+        // 跳过第一个空对象（纯模板），只生成实际的json数据
+        if (i === 0 && Object.keys(jsonData[i]).length === 0) {
+          continue;
+        }
+        
+        bannerIndex++; // 实际生成的文件序号从1开始
         setCurrentIndex(i);
         
         // 应用数据（包括编辑的值）
@@ -1009,10 +1179,10 @@ export const BannerBatchPage: React.FC = () => {
         const minute = String(now.getMinutes()).padStart(2, '0');
         const timestamp = `${year}${month}${day}${hour}${minute}`;
         
-        // 如果有 id，使用 id_时间戳，否则使用 banner_序号_时间戳
+        // 如果有 id，使用 id_时间戳，否则使用 banner_序号_时间戳（序号从1开始）
         const fileName = row.id 
           ? `${row.id}_${timestamp}.png`
-          : `banner_${i + 1}_${timestamp}.png`;
+          : `banner_${bannerIndex}_${timestamp}.png`;
 
         try {
           // 导出为 Data URL

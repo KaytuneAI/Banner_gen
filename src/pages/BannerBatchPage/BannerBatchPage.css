@@ -163,6 +163,11 @@
   border-color: rgba(0, 212, 255, 0.5);
 }
 
+/* 让外层容器在 2×2 模式下不滚动 */
+.banner-preview-wrapper.multi-mode {
+  overflow: visible;
+}
+
 .preview-iframe {
   border: none;
   background: transparent;
@@ -798,4 +803,139 @@
   .banner-batch-page {
     padding: 24px 16px;
   }
+}
+
+/* 模板选择区域布局 */
+.template-selector-content {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.template-upload-left {
+  flex: 1;
+}
+
+.template-view-mode-section {
+  flex: 1;
+  padding: 16px;
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.05) 0%, rgba(0, 212, 255, 0.05) 100%);
+  border: 1.5px solid rgba(102, 126, 234, 0.2);
+  border-radius: 12px;
+}
+
+.template-view-mode-section h3 {
+  margin: 0 0 12px 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.85);
+}
+
+.view-mode-toggle {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.view-mode-btn {
+  flex: 1;
+  padding: 10px 16px;
+  border: 1.5px solid rgba(0, 0, 0, 0.15);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.7);
+  transition: all 0.3s ease;
+}
+
+.view-mode-btn:hover {
+  border-color: rgba(0, 212, 255, 0.4);
+  background: rgba(0, 212, 255, 0.08);
+  color: rgba(0, 0, 0, 0.9);
+  transform: translateY(-1px);
+}
+
+.view-mode-btn.active {
+  background: linear-gradient(135deg, #667eea 0%, #00d4ff 100%);
+  border-color: #667eea;
+  color: #ffffff;
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.view-mode-hint {
+  margin: 0;
+  font-size: 11px;
+  color: rgba(0, 0, 0, 0.5);
+  line-height: 1.4;
+}
+
+/* 多图预览网格布局 */
+.multi-preview-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  box-sizing: border-box;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 
+    0 4px 24px rgba(0, 0, 0, 0.06),
+    0 1px 3px rgba(0, 0, 0, 0.04);
+  /* 确保网格项能够完整显示，不产生滚动条 */
+  overflow: visible;
+  align-items: start;
+}
+
+.multi-preview-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: visible;
+  /* 为缩放后的iframe留出空间，确保内容完整显示 */
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+
+.multi-preview-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.7);
+  text-align: center;
+  padding: 4px 8px;
+  background: rgba(0, 212, 255, 0.08);
+  border-radius: 6px;
+}
+
+.multi-preview-iframe-wrapper {
+  position: relative;
+  overflow: hidden;
+}
+
+.multi-preview-iframe {
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  /* 确保iframe内容不产生滚动条 */
+  overflow: hidden;
+  pointer-events: auto;
+  /* 缩放后需要调整容器大小以容纳内容 */
+  flex-shrink: 0;
+}
+
+/* 预览控制样式更新 */
+.preview-mode-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 6px;
+  background: linear-gradient(135deg, #667eea 0%, #00d4ff 100%);
+  color: #ffffff;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }

@@ -269,10 +269,11 @@ export const processZipFile = async (file: File): Promise<ZipProcessResult> => {
 
   return {
     html: finalHtml,
-    css: "", // ZIP 中的 CSS 已经内联到 HTML 中
+    css: processedCss, // 返回处理过的 CSS（字体路径已转换为 base64），用于注入顶层文档
     fields: Array.from(fieldMap.values()),
     jsonData: processedJsonData,
     successMessage: successMsg,
   };
 };
+
 

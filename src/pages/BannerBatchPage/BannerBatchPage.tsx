@@ -791,7 +791,7 @@ export const BannerBatchPage: React.FC = () => {
             const exportElement = container || iframeDoc.body;
             if (exportElement) {
               try {
-                const dataUrl = await exportNodeToPngDataUrl(exportElement);
+                const dataUrl = await exportNodeToPngDataUrl(exportElement, { fontEmbedCSS: cssContent });
                 const response = await fetch(dataUrl);
                 const blob = await response.blob();
                 
@@ -824,7 +824,7 @@ export const BannerBatchPage: React.FC = () => {
             const exportElement = container || iframeDoc.body;
             if (exportElement) {
               try {
-                const dataUrl = await exportNodeToPngDataUrl(exportElement);
+                const dataUrl = await exportNodeToPngDataUrl(exportElement, { fontEmbedCSS: cssContent });
                 const response = await fetch(dataUrl);
                 const blob = await response.blob();
                 
@@ -880,7 +880,7 @@ export const BannerBatchPage: React.FC = () => {
 
         try {
           // 导出为 Data URL
-          const dataUrl = await exportNodeToPngDataUrl(exportElement);
+          const dataUrl = await exportNodeToPngDataUrl(exportElement, { fontEmbedCSS: cssContent });
           
           // 将 Data URL 转换为 Blob
           const response = await fetch(dataUrl);

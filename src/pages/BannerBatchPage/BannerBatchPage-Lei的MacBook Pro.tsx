@@ -67,30 +67,12 @@ export const BannerBatchPage: React.FC = () => {
     jsonDataRef.current = jsonData;
   }, [jsonData]);
 
-  // 将模板 CSS 中的 @font-face 规则注入到顶层文档，确保 html-to-image 能识别字体
+  // 将模板 CSS（包括 @font-face）注入到顶层文档，确保 html-to-image 能识别字体
   useEffect(() => {
-    const STYLE_ID = "banner-template-font-style";
+    if (!cssContent) return;
+
+    const STYLE_ID = "banner-template-global-style";
     let styleEl = document.getElementById(STYLE_ID) as HTMLStyleElement | null;
-
-    // 如果没有 CSS，或者模板被清空，移除旧的 style
-    if (!cssContent) {
-      if (styleEl) {
-        styleEl.remove();
-      }
-      return;
-    }
-
-    // 只抽取 @font-face 相关规则，避免把整套模板 CSS 污染到应用全局
-    const matches = cssContent.match(/@font-face[\s\S]*?}/g);
-    const fontCss = matches ? matches.join("\n") : "";
-
-    if (!fontCss) {
-      // 没有字体相关定义，就不注入
-      if (styleEl) {
-        styleEl.remove();
-      }
-      return;
-    }
 
     if (!styleEl) {
       styleEl = document.createElement("style");
@@ -98,7 +80,9 @@ export const BannerBatchPage: React.FC = () => {
       document.head.appendChild(styleEl);
     }
 
-    styleEl.innerHTML = fontCss;
+    // 简单清掉可能残留的 <style> 标签，只保留纯 CSS
+    const cleanedCss = cssContent.replace(/<\/?style[^>]*>/gi, "");
+    styleEl.innerHTML = cleanedCss;
 
     // 清理函数：组件卸载时移除样式
     return () => {
@@ -146,9 +130,6 @@ export const BannerBatchPage: React.FC = () => {
           fields: result.fields,
           fileName: file.name,
         });
-        // ✅ 清除旧的 JSON 数据，避免新模板使用旧数据
-        setJsonData([]);
-        setCurrentIndex(0);
         setSuccess(result.successMessage);
         if (htmlInputRef.current) {
           htmlInputRef.current.value = "";
@@ -226,13 +207,8 @@ export const BannerBatchPage: React.FC = () => {
         fileName: file.name,
       });
       
-      // ✅ 清除旧的 JSON 数据，避免新模板使用旧数据
       if (result.jsonData.length > 0) {
         setJsonData(result.jsonData);
-        setCurrentIndex(0);
-      } else {
-        // 如果 ZIP 中没有 JSON 数据，也要清除旧的 JSON 数据
-        setJsonData([]);
         setCurrentIndex(0);
       }
       
@@ -913,9 +889,6 @@ export const BannerBatchPage: React.FC = () => {
           ? jsonData.length - 1  // 如果第一个是空对象，减去1
           : jsonData.length;      // 否则使用全部数量
         setSuccess(`成功生成 ${successCount} 张 Banner（${templateCount} 个模板 + ${dataCount} 个数据项），已打包为 ZIP 文件`);
-
-        // ✅ 生成完成后，把 currentIndex 复位，避免 2×2 预览全部指到最后一张
-        setCurrentIndex(0);
       } else {
         setError("没有成功生成任何 Banner");
       }
@@ -1210,7 +1183,6 @@ export const BannerBatchPage: React.FC = () => {
                         setTemplateFields([]);
                         setSelectedField(null);
                         setSelectedFieldValue("");
-                        setTemplateAssets(null); // ✅ 清除统一模板状态，与 handleClearHtml 保持一致
                         setSuccess("已清除模板");
                       }}
                       className="template-clear-btn"
@@ -1232,7 +1204,6 @@ export const BannerBatchPage: React.FC = () => {
               ref={iframeRef}
               title="banner-export"
               srcDoc={buildSrcDoc(htmlContent, cssContent)}
-              sandbox="allow-same-origin"
               style={{ 
                 width: iframeSize?.width || 750, 
                 height: iframeSize?.height || 1125 

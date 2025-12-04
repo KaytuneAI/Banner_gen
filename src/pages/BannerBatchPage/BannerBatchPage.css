@@ -166,6 +166,7 @@
 /* 让外层容器在 2×2 模式下不滚动 */
 .banner-preview-wrapper.multi-mode {
   overflow: visible;
+  padding: 24px;
 }
 
 .preview-iframe {
@@ -697,7 +698,7 @@
 
 /* 字段编辑器（展开时显示） */
 .template-field-editor {
-  padding: 16px;
+  padding: 10px 16px;
   background: rgba(0, 0, 0, 0.02);
   border-top: 1px solid rgba(0, 0, 0, 0.08);
   margin-top: 0;
@@ -706,7 +707,7 @@
 .field-value-label {
   font-size: 11px;
   color: rgba(0, 0, 0, 0.5);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -715,7 +716,7 @@
 .field-value-input,
 .field-value-textarea {
   width: 100%;
-  padding: 10px 12px;
+  padding: 8px 12px;
   border: 1px solid rgba(0, 0, 0, 0.1);
   border-radius: 8px;
   font-size: 13px;
@@ -745,6 +746,13 @@
   resize: vertical;
   min-height: 60px;
   line-height: 1.6;
+}
+
+.field-value-input:disabled {
+  background-color: #f5f5f5 !important;
+  color: #999 !important;
+  cursor: not-allowed !important;
+  opacity: 1;
 }
 
 .template-upload-label {
@@ -839,15 +847,21 @@
 
 .view-mode-btn {
   flex: 1;
-  padding: 10px 16px;
+  padding: 10px;
   border: 1.5px solid rgba(0, 0, 0, 0.15);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.8);
   cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: rgba(0, 0, 0, 0.7);
   transition: all 0.3s ease;
+}
+
+.view-mode-btn svg {
+  width: 20px;
+  height: 20px;
 }
 
 .view-mode-btn:hover {
@@ -878,13 +892,11 @@
   grid-template-columns: repeat(2, 1fr);
   gap: 16px;
   box-sizing: border-box;
-  background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 16px;
-  padding: 24px;
-  box-shadow: 
-    0 4px 24px rgba(0, 0, 0, 0.06),
-    0 1px 3px rgba(0, 0, 0, 0.04);
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
   /* 确保网格项能够完整显示，不产生滚动条 */
   overflow: visible;
   align-items: start;
@@ -898,6 +910,18 @@
   /* 为缩放后的iframe留出空间，确保内容完整显示 */
   align-items: flex-start;
   justify-content: flex-start;
+  border-radius: 12px;
+  padding: 8px;
+  transition: all 0.3s ease;
+}
+
+.multi-preview-item.selected {
+  box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.6);
+  background: rgba(0, 212, 255, 0.05);
+}
+
+.multi-preview-item:hover {
+  background: rgba(0, 212, 255, 0.02);
 }
 
 .multi-preview-label {

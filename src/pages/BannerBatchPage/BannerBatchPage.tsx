@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import JSZip from "jszip";
 import { parseJsonFile } from "../../utils/fileHelpers";
 import { exportNodeToPngDataUrl } from "../../utils/htmlExport";
@@ -32,6 +32,9 @@ export const BannerBatchPage: React.FC = () => {
   // 单图/多图模式状态
   const [isMultiView, setIsMultiView] = useState<boolean>(false);
   
+  // 2×2 模式下选中的 banner 索引（用于确定编辑哪个图）
+  const [selectedBannerIndex, setSelectedBannerIndex] = useState<number | null>(null);
+  
   // 统一模板状态（用于一键保存判断）
   const [templateAssets, setTemplateAssets] = useState<{
     html: string;
@@ -39,6 +42,14 @@ export const BannerBatchPage: React.FC = () => {
     fields: TemplateField[];
     fileName: string;
   } | null>(null);
+  
+  // 获取当前活动的索引（单图用 currentIndex，多图用 selectedBannerIndex）
+  const getActiveIndex = useCallback(() => {
+    if (isMultiView) {
+      return selectedBannerIndex ?? currentIndex;
+    }
+    return currentIndex;
+  }, [isMultiView, selectedBannerIndex, currentIndex]);
   
   // 2×2 预览网格相关状态
   const gridRef = useRef<HTMLDivElement | null>(null);
@@ -149,6 +160,7 @@ export const BannerBatchPage: React.FC = () => {
         // ✅ 清除旧的 JSON 数据，避免新模板使用旧数据
         setJsonData([]);
         setCurrentIndex(0);
+        setSelectedBannerIndex(null);
         setSuccess(result.successMessage);
         if (htmlInputRef.current) {
           htmlInputRef.current.value = "";
@@ -230,10 +242,12 @@ export const BannerBatchPage: React.FC = () => {
       if (result.jsonData.length > 0) {
         setJsonData(result.jsonData);
         setCurrentIndex(0);
+        setSelectedBannerIndex(isMultiView ? 0 : null);
       } else {
         // 如果 ZIP 中没有 JSON 数据，也要清除旧的 JSON 数据
         setJsonData([]);
         setCurrentIndex(0);
+        setSelectedBannerIndex(null);
       }
       
       setSuccess(result.successMessage);
@@ -266,20 +280,132 @@ export const BannerBatchPage: React.FC = () => {
     }
   };
 
-  // 高亮 iframe 中的元素（使用预览 iframe）
-  const highlightElementInIframe = useCallback((fieldName: string) => {
-    const iframe = previewIframeRef.current || iframeRef.current;
+  // 从指定 iframe 同步字段值到右侧面板
+  const syncSelectedFieldValueFromIframe = useCallback((fieldName: string, dataIndex: number) => {
+    let iframe: HTMLIFrameElement | null = null;
+    
+    // 多图模式：找到对应的 iframe
+    if (isMultiView) {
+      const offset = dataIndex - currentIndex;
+      if (offset >= 0 && offset < 4) {
+        iframe = multiIframeRefs.current[offset];
+      }
+    }
+    
+    // 单图模式或找不到对应 iframe：使用预览 iframe
+    if (!iframe) {
+      iframe = previewIframeRef.current || iframeRef.current;
+    }
+    
     if (!iframe) return;
 
     try {
       const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
       if (!iframeDoc) return;
 
-      // 清除之前的高亮
-      const previousHighlighted = iframeDoc.querySelector(".field-highlight");
-      if (previousHighlighted) {
-        previousHighlighted.classList.remove("field-highlight");
+      // 特殊处理价格字段
+      if (fieldName === 'sec_price_int' || fieldName === 'sec_price_decimal') {
+        const priceEl = iframeDoc.querySelector('[data-field-int]') as HTMLElement;
+        if (priceEl) {
+          const priceInt2 = priceEl.querySelector('.price-int-2') as HTMLElement;
+          const priceInt3 = priceEl.querySelector('.price-int-3') as HTMLElement;
+          const priceDecimal2 = priceEl.querySelector('.price-decimal-2') as HTMLElement;
+          const priceDecimal3 = priceEl.querySelector('.price-decimal-3') as HTMLElement;
+          
+          let intValue = '';
+          let decValue = '';
+          
+          if (priceInt2 || priceInt3 || priceDecimal2 || priceDecimal3) {
+            intValue = (priceInt2?.textContent || priceInt3?.textContent || '').trim();
+            decValue = (priceDecimal2?.textContent || priceDecimal3?.textContent || '').trim();
+          } else {
+            const signNode = priceEl.querySelector('.sign');
+            const decimalNode = priceEl.querySelector('.decimal');
+            intValue = signNode?.nextSibling?.nodeValue?.trim() || '';
+            decValue = decimalNode?.textContent?.trim() || '';
+          }
+          
+          setSelectedFieldValue(fieldName === 'sec_price_int' ? intValue : decValue);
+        }
+      } else {
+        // 普通字段处理
+        const element = iframeDoc.querySelector(`[data-field="${fieldName}"]`) as HTMLElement;
+        if (element) {
+          let value = "";
+          if (element.tagName === "IMG") {
+            value = (element as HTMLImageElement).src || "";
+          } else {
+            value = element.textContent?.trim() || element.innerText?.trim() || "";
+          }
+          setSelectedFieldValue(value);
+        }
       }
+    } catch (e) {
+      console.warn("无法从 iframe 同步字段值:", e);
+    }
+  }, [isMultiView, currentIndex]);
+  
+  // 清除所有 iframe 中的字段高亮
+  const clearAllFieldHighlights = useCallback(() => {
+    // 清除多图模式下的所有 iframe
+    if (isMultiView) {
+      multiIframeRefs.current.forEach((iframe) => {
+        if (iframe) {
+          try {
+            const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+            if (iframeDoc) {
+              const highlighted = iframeDoc.querySelectorAll(".field-highlight");
+              highlighted.forEach((el) => el.classList.remove("field-highlight"));
+            }
+          } catch (e) {
+            // 忽略错误
+          }
+        }
+      });
+    }
+    
+    // 清除单图模式的 iframe
+    const previewIframe = previewIframeRef.current || iframeRef.current;
+    if (previewIframe) {
+      try {
+        const iframeDoc = previewIframe.contentDocument || previewIframe.contentWindow?.document;
+        if (iframeDoc) {
+          const highlighted = iframeDoc.querySelectorAll(".field-highlight");
+          highlighted.forEach((el) => el.classList.remove("field-highlight"));
+      }
+      } catch (e) {
+        // 忽略错误
+      }
+    }
+  }, [isMultiView]);
+  
+  // 高亮 iframe 中的元素（根据 activeIndex 选择正确的 iframe，只高亮选中的那个）
+  const highlightElementInIframe = useCallback((fieldName: string, dataIndex?: number) => {
+    const activeIndex = dataIndex !== undefined ? dataIndex : getActiveIndex();
+    
+    // 先清除所有 iframe 中的高亮
+    clearAllFieldHighlights();
+    
+    let iframe: HTMLIFrameElement | null = null;
+    
+    // 多图模式：找到对应的 iframe（只高亮选中的那个）
+    if (isMultiView) {
+      const offset = activeIndex - currentIndex;
+      if (offset >= 0 && offset < 4) {
+        iframe = multiIframeRefs.current[offset];
+      }
+    }
+    
+    // 单图模式或找不到对应 iframe：使用预览 iframe
+    if (!iframe) {
+      iframe = previewIframeRef.current || iframeRef.current;
+    }
+    
+    if (!iframe) return;
+
+    try {
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (!iframeDoc) return;
 
       // 特殊处理价格字段
       if (fieldName === 'sec_price_int' || fieldName === 'sec_price_decimal') {
@@ -310,10 +436,13 @@ export const BannerBatchPage: React.FC = () => {
           
           setSelectedFieldValue(fieldName === 'sec_price_int' ? intValue : decValue);
           
+          // 只在单图模式下滚动，多图模式下 iframe 是缩放的，滚动会导致布局问题
+          if (!isMultiView) {
           try {
-            priceEl.scrollIntoView({ behavior: "smooth", block: "center" });
+              priceEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
           } catch (e) {
             // 忽略错误
+            }
           }
         } else {
           setSelectedFieldValue("未找到对应元素");
@@ -334,11 +463,13 @@ export const BannerBatchPage: React.FC = () => {
           }
           setSelectedFieldValue(value);
 
-          // 滚动到元素位置（在 iframe 内部滚动）
+          // 只在单图模式下滚动，多图模式下 iframe 是缩放的，滚动会导致布局问题
+          if (!isMultiView) {
           try {
-            element.scrollIntoView({ behavior: "smooth", block: "center" });
+              element.scrollIntoView({ behavior: "smooth", block: "nearest" });
           } catch (e) {
             // 如果滚动失败，忽略错误
+            }
           }
         } else {
           setSelectedFieldValue("未找到对应元素");
@@ -348,32 +479,34 @@ export const BannerBatchPage: React.FC = () => {
       console.warn("无法访问 iframe 内容:", e);
       setSelectedFieldValue("无法访问预览内容");
     }
-  }, []);
+  }, [isMultiView, currentIndex, getActiveIndex, clearAllFieldHighlights]);
+
+  // 处理选中 banner（2×2 模式下点击某个图）
+  const handleSelectBanner = useCallback((index: number) => {
+    setSelectedBannerIndex(index);
+    
+    // 点击 cell 时如果当前已经选中了某个字段，需要同步字段值并重新高亮
+    if (selectedField) {
+      syncSelectedFieldValueFromIframe(selectedField, index);
+      // 重新高亮选中字段（只高亮新选中的产品）
+      highlightElementInIframe(selectedField, index);
+    }
+  }, [selectedField, syncSelectedFieldValueFromIframe, highlightElementInIframe]);
 
   // 处理字段点击
   const handleFieldClick = (fieldName: string) => {
+    const activeIndex = getActiveIndex();
+    
     // 如果点击的是已选中的字段，则取消选中；否则选中新字段
     if (selectedField === fieldName) {
       setSelectedField(null);
       setSelectedFieldValue("");
-      // 清除高亮
-      const iframe = previewIframeRef.current || iframeRef.current;
-      if (iframe) {
-        try {
-          const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-          if (iframeDoc) {
-            const highlighted = iframeDoc.querySelector(".field-highlight");
-            if (highlighted) {
-              highlighted.classList.remove("field-highlight");
-            }
-          }
-        } catch (e) {
-          // 忽略错误
-        }
-      }
+      // 清除所有 iframe 中的高亮
+      clearAllFieldHighlights();
     } else {
       setSelectedField(fieldName);
-      highlightElementInIframe(fieldName);
+      highlightElementInIframe(fieldName, activeIndex);
+      syncSelectedFieldValueFromIframe(fieldName, activeIndex);
     }
   };
 
@@ -382,13 +515,13 @@ export const BannerBatchPage: React.FC = () => {
   // updatePriceFields 已移至 dataApplier.ts，直接使用导入的函数
 
   // 辅助函数：更新文档中的字段值
-  const updateFieldInDocument = useCallback((iframeDoc: Document, fieldName: string, newValue: string, isPreview: boolean = false) => {
+  const updateFieldInDocument = useCallback((iframeDoc: Document, fieldName: string, newValue: string, isPreview: boolean = false, isSelectedIframe: boolean = false) => {
     // 特殊处理价格字段
     if (fieldName === 'sec_price_int' || fieldName === 'sec_price_decimal') {
       const priceEl = iframeDoc.querySelector('[data-field-int]') as HTMLElement;
       if (priceEl) {
-        // 预览模式下才高亮
-        if (isPreview) {
+        // 预览模式下且是选中的 iframe 才高亮
+        if (isPreview && isSelectedIframe) {
           if (!priceEl.classList.contains("field-highlight")) {
             const previousHighlighted = iframeDoc.querySelector(".field-highlight");
             if (previousHighlighted) {
@@ -396,6 +529,9 @@ export const BannerBatchPage: React.FC = () => {
             }
             priceEl.classList.add("field-highlight");
           }
+        } else if (isPreview && !isSelectedIframe) {
+          // 如果不是选中的 iframe，清除高亮
+          priceEl.classList.remove("field-highlight");
         }
 
         // 获取当前价格值（用于确定需要更新的值）
@@ -428,8 +564,8 @@ export const BannerBatchPage: React.FC = () => {
       // 普通字段处理
       const element = iframeDoc.querySelector(`[data-field="${fieldName}"]`) as HTMLElement;
       if (element) {
-        // 预览模式下才高亮
-        if (isPreview) {
+        // 预览模式下且是选中的 iframe 才高亮
+        if (isPreview && isSelectedIframe) {
           if (!element.classList.contains("field-highlight")) {
             // 清除其他高亮
             const previousHighlighted = iframeDoc.querySelector(".field-highlight");
@@ -438,6 +574,9 @@ export const BannerBatchPage: React.FC = () => {
             }
             element.classList.add("field-highlight");
           }
+        } else if (isPreview && !isSelectedIframe) {
+          // 如果不是选中的 iframe，清除高亮
+          element.classList.remove("field-highlight");
         }
 
         if (element.tagName === "IMG") {
@@ -451,19 +590,43 @@ export const BannerBatchPage: React.FC = () => {
     }
   }, [updatePriceFields]);
 
-  // 更新 iframe 中字段的值（同时更新预览和导出 iframe）
+  // 更新 iframe 中字段的值（根据 activeIndex 更新对应的 iframe）
   const updateFieldValue = useCallback((fieldName: string, newValue: string) => {
-    // 更新预览 iframe
-    const previewIframe = previewIframeRef.current;
-    if (previewIframe) {
+    const activeIndex = getActiveIndex();
+    let targetIframe: HTMLIFrameElement | null = null;
+    let targetIframeOffset: number | null = null;
+    
+    // 多图模式：找到对应的 iframe
+    if (isMultiView) {
+      const offset = activeIndex - currentIndex;
+      if (offset >= 0 && offset < 4) {
+        targetIframe = multiIframeRefs.current[offset];
+        targetIframeOffset = offset;
+      }
+    }
+    
+    // 单图模式或找不到对应 iframe：使用预览 iframe
+    if (!targetIframe) {
+      targetIframe = previewIframeRef.current;
+    }
+    
+    // 先清除所有 iframe 中的高亮
+    clearAllFieldHighlights();
+    
+    // 更新目标 iframe
+    if (targetIframe) {
       try {
-        const previewDoc = previewIframe.contentDocument || previewIframe.contentWindow?.document;
-        if (previewDoc) {
-          updateFieldInDocument(previewDoc, fieldName, newValue, true);
+        const iframeDoc = targetIframe.contentDocument || targetIframe.contentWindow?.document;
+        if (iframeDoc) {
+          // 判断是否是选中的 iframe（多图模式下需要检查 offset）
+          const isSelectedIframe = isMultiView 
+            ? (targetIframeOffset !== null && selectedBannerIndex !== null && activeIndex === selectedBannerIndex)
+            : true;
+          updateFieldInDocument(iframeDoc, fieldName, newValue, true, isSelectedIframe);
           
-          // 更新显示值（从预览 iframe 读取）
+          // 更新显示值（从目标 iframe 读取）
           if (fieldName === 'sec_price_int' || fieldName === 'sec_price_decimal') {
-            const priceEl = previewDoc.querySelector('[data-field-int]') as HTMLElement;
+            const priceEl = iframeDoc.querySelector('[data-field-int]') as HTMLElement;
             if (priceEl) {
               const priceInt2 = priceEl.querySelector('.price-int-2') as HTMLElement;
               const priceInt3 = priceEl.querySelector('.price-int-3') as HTMLElement;
@@ -474,7 +637,7 @@ export const BannerBatchPage: React.FC = () => {
               setSelectedFieldValue(fieldName === 'sec_price_int' ? intValue : decValue);
             }
           } else {
-            const element = previewDoc.querySelector(`[data-field="${fieldName}"]`) as HTMLElement;
+            const element = iframeDoc.querySelector(`[data-field="${fieldName}"]`) as HTMLElement;
             if (element) {
               if (element.tagName === "IMG") {
                 setSelectedFieldValue((element as HTMLImageElement).src || "");
@@ -489,28 +652,28 @@ export const BannerBatchPage: React.FC = () => {
       }
     }
 
-    // 更新导出 iframe
+    // 更新导出 iframe（用于批量生成）
     const exportIframe = iframeRef.current;
     if (exportIframe) {
       try {
         const iframeDoc = exportIframe.contentDocument || exportIframe.contentWindow?.document;
         if (iframeDoc) {
-          updateFieldInDocument(iframeDoc, fieldName, newValue, false);
+          updateFieldInDocument(iframeDoc, fieldName, newValue, false, false);
         }
       } catch (e) {
         console.warn("无法更新导出 iframe 内容:", e);
       }
     }
       
-    // 保存编辑的值到 editedValues
+    // 保存编辑的值到 editedValues（使用 activeIndex）
     setEditedValues(prev => ({
       ...prev,
-      [currentIndex]: {
-        ...prev[currentIndex],
+      [activeIndex]: {
+        ...prev[activeIndex],
         [fieldName]: newValue
       }
     }));
-  }, [currentIndex, updateFieldInDocument]);
+  }, [isMultiView, currentIndex, getActiveIndex, updateFieldInDocument, selectedBannerIndex, clearAllFieldHighlights]);
 
   // 清除 CSS
   const handleClearCss = () => {
@@ -531,6 +694,7 @@ export const BannerBatchPage: React.FC = () => {
       const parsed = await parseJsonFile(file);
       setJsonData(parsed);
       setCurrentIndex(0);
+      setSelectedBannerIndex(isMultiView ? 0 : null);
       setSuccess(`成功加载 ${parsed.length} 条数据`);
       // 应用第一条数据到预览
       if (parsed.length > 0) {
@@ -572,6 +736,11 @@ export const BannerBatchPage: React.FC = () => {
   // 多图模式：更新4个iframe的数据
   useEffect(() => {
     if (isMultiView && jsonData.length > 0 && htmlContent) {
+      // 如果还没有选中任何 banner，默认选中左上角（currentIndex）
+      if (selectedBannerIndex === null) {
+        setSelectedBannerIndex(currentIndex);
+      }
+      
       const timer = setTimeout(() => {
         [0, 1, 2, 3].forEach((idx) => {
           const dataIndex = currentIndex + idx;
@@ -585,7 +754,7 @@ export const BannerBatchPage: React.FC = () => {
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [isMultiView, jsonData, currentIndex, htmlContent, applyJsonDataToMultiIframeWrapper]);
+  }, [isMultiView, jsonData, currentIndex, htmlContent, applyJsonDataToMultiIframeWrapper, selectedBannerIndex]);
 
   // 当前数据变化时，应用到 iframe（单图模式）
   useEffect(() => {
@@ -674,30 +843,41 @@ export const BannerBatchPage: React.FC = () => {
   // 切换到上一条
   const handlePrev = () => {
     const step = isMultiView ? 4 : 1;
+    const activeIndex = getActiveIndex();
+    
     if (currentIndex >= step) {
       // 保存当前编辑的值（如果有）
       if (selectedField && selectedFieldValue) {
         setEditedValues(prev => ({
           ...prev,
-          [currentIndex]: {
-            ...prev[currentIndex],
+          [activeIndex]: {
+            ...prev[activeIndex],
             [selectedField]: selectedFieldValue
           }
         }));
       }
-      setCurrentIndex(currentIndex - step);
+      const newIndex = currentIndex - step;
+      setCurrentIndex(newIndex);
+      // 多图模式：默认选中左上角那张
+      if (isMultiView) {
+        setSelectedBannerIndex(newIndex);
+      }
     } else if (currentIndex > 0) {
       // 如果不足4步，至少回到0
       if (selectedField && selectedFieldValue) {
         setEditedValues(prev => ({
           ...prev,
-          [currentIndex]: {
-            ...prev[currentIndex],
+          [activeIndex]: {
+            ...prev[activeIndex],
             [selectedField]: selectedFieldValue
           }
         }));
       }
       setCurrentIndex(0);
+      // 多图模式：默认选中左上角那张
+      if (isMultiView) {
+        setSelectedBannerIndex(0);
+      }
     }
   };
 
@@ -707,19 +887,25 @@ export const BannerBatchPage: React.FC = () => {
     const maxIndex = isMultiView 
       ? Math.max(0, jsonData.length - 4)  // 多图模式：确保最后4个都能显示
       : jsonData.length - 1;
+    const activeIndex = getActiveIndex();
     
     if (currentIndex < maxIndex) {
       // 保存当前编辑的值（如果有）
       if (selectedField && selectedFieldValue) {
         setEditedValues(prev => ({
           ...prev,
-          [currentIndex]: {
-            ...prev[currentIndex],
+          [activeIndex]: {
+            ...prev[activeIndex],
             [selectedField]: selectedFieldValue
           }
         }));
       }
-      setCurrentIndex(Math.min(currentIndex + step, maxIndex));
+      const newIndex = Math.min(currentIndex + step, maxIndex);
+      setCurrentIndex(newIndex);
+      // 多图模式：默认选中左上角那张
+      if (isMultiView) {
+        setSelectedBannerIndex(newIndex);
+      }
     }
   };
 
@@ -735,6 +921,21 @@ export const BannerBatchPage: React.FC = () => {
     } else {
       // 老一点的浏览器兜底等一会儿
       await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+  };
+
+  // 清除导出 iframe 中的所有 highlight（用于批量生成）
+  const clearExportIframeHighlights = () => {
+    if (iframeRef.current) {
+      try {
+        const iframeDoc = iframeRef.current.contentDocument || iframeRef.current.contentWindow?.document;
+        if (iframeDoc) {
+          const highlighted = iframeDoc.querySelectorAll(".field-highlight");
+          highlighted.forEach((el) => el.classList.remove("field-highlight"));
+        }
+      } catch (e) {
+        // 忽略错误
+      }
     }
   };
 
@@ -787,6 +988,9 @@ export const BannerBatchPage: React.FC = () => {
             // 等待字体加载完成
             await waitForIframeFonts(iframeDoc);
             
+            // 清除所有 highlight，确保导出的图片没有高亮印记
+            clearExportIframeHighlights();
+            
             const container = iframeDoc.querySelector('.container') as HTMLElement;
             const exportElement = container || iframeDoc.body;
             if (exportElement) {
@@ -819,6 +1023,9 @@ export const BannerBatchPage: React.FC = () => {
           if (iframeDoc) {
             // 等待字体加载完成
             await waitForIframeFonts(iframeDoc);
+            
+            // 清除所有 highlight，确保导出的图片没有高亮印记
+            clearExportIframeHighlights();
             
             const container = iframeDoc.querySelector('.container') as HTMLElement;
             const exportElement = container || iframeDoc.body;
@@ -865,6 +1072,9 @@ export const BannerBatchPage: React.FC = () => {
 
         // 等待字体加载完成
         await waitForIframeFonts(iframeDoc);
+
+        // 清除所有 highlight，确保导出的图片没有高亮印记
+        clearExportIframeHighlights();
 
         // 优先导出 .container 元素，如果没有则使用 body
         const container = iframeDoc.querySelector('.container') as HTMLElement;
@@ -1014,11 +1224,26 @@ export const BannerBatchPage: React.FC = () => {
     if (selectedField && htmlContent) {
       // 延迟一下，确保 iframe 内容已渲染
       const timer = setTimeout(() => {
-        highlightElementInIframe(selectedField);
+        const activeIndex = getActiveIndex();
+        highlightElementInIframe(selectedField, activeIndex);
+        syncSelectedFieldValueFromIframe(selectedField, activeIndex);
       }, 200);
       return () => clearTimeout(timer);
     }
-  }, [selectedField, htmlContent, cssContent, highlightElementInIframe]);
+  }, [selectedField, htmlContent, cssContent, highlightElementInIframe, getActiveIndex, syncSelectedFieldValueFromIframe]);
+  
+  // 当 selectedBannerIndex 变化时，同步字段值（如果已选中字段）
+  useEffect(() => {
+    if (isMultiView && selectedBannerIndex !== null && selectedField) {
+      syncSelectedFieldValueFromIframe(selectedField, selectedBannerIndex);
+    }
+  }, [isMultiView, selectedBannerIndex, selectedField, syncSelectedFieldValueFromIframe]);
+
+  // 缓存单图模式的 srcDoc，避免切换字段时重新计算导致 iframe 刷新
+  const singleViewSrcDoc = useMemo(() => {
+    if (!htmlContent) return "";
+    return buildSrcDoc(htmlContent, cssContent);
+  }, [htmlContent, cssContent]);
 
   return (
     <div className="banner-batch-page">
@@ -1048,7 +1273,7 @@ export const BannerBatchPage: React.FC = () => {
                   ref={previewIframeRef}
                   title="banner-preview"
                   className="preview-iframe"
-                  srcDoc={buildSrcDoc(htmlContent, cssContent)}
+                  srcDoc={singleViewSrcDoc}
                   sandbox="allow-same-origin"
                   style={
                     iframeSize
@@ -1075,7 +1300,10 @@ export const BannerBatchPage: React.FC = () => {
                 {[0, 1, 2, 3].map((idx) => {
                   const dataIndex = currentIndex + idx;
                   const hasData = jsonData.length > 0 && dataIndex < jsonData.length;
-                  const displayIndex = hasData ? dataIndex : currentIndex;
+                  // 如果没有数据，不显示（而不是显示 currentIndex 的数据）
+                  const displayIndex = hasData ? dataIndex : -1;
+                  const activeIndex = getActiveIndex();
+                  const isSelectedItem = isMultiView && selectedBannerIndex !== null && displayIndex === activeIndex && displayIndex >= 0;
                   
                   // 计算缩放比例
                   const templateWidth = iframeSize?.width ?? 750;
@@ -1085,55 +1313,94 @@ export const BannerBatchPage: React.FC = () => {
                   const scale = Math.min(1, cellWidth / templateWidth);
                   
                   return (
-                    <div key={idx} className="multi-preview-item">
+                    <div 
+                      key={idx} 
+                      className={`multi-preview-item ${isSelectedItem ? 'selected' : ''}`}
+                      onClick={() => {
+                        if (hasData) {
+                          handleSelectBanner(dataIndex);
+                        }
+                      }}
+                      style={{ cursor: hasData ? 'pointer' : 'default' }}
+                    >
                       <div className="multi-preview-label">
                         {hasData ? `图 ${idx + 1} (${displayIndex + 1}/${jsonData.length})` : `图 ${idx + 1}`}
                       </div>
                       {htmlContent ? (
-                        <div
-                          className="multi-preview-iframe-wrapper"
-                          style={{
-                            width: templateWidth * scale,
-                            height: templateHeight * scale,
-                          }}
-                        >
-                          <iframe
-                            ref={(el) => {
-                              multiIframeRefs.current[idx] = el;
-                            }}
-                            title={`banner-preview-${idx}`}
-                            className="preview-iframe multi-preview-iframe"
-                            srcDoc={buildSrcDoc(htmlContent, cssContent)}
-                            sandbox="allow-same-origin"
+                        hasData ? (
+                          <div
+                            className="multi-preview-iframe-wrapper"
                             style={{
-                              width: templateWidth,
-                              height: templateHeight,
-                              transform: `scale(${scale})`,
-                              transformOrigin: 'top left',
+                              width: templateWidth * scale,
+                              height: templateHeight * scale,
                             }}
-                            onLoad={(e) => {
-                              const iframe = e.currentTarget;
-                              if (idx === 0) {
-                                adjustIframeSize();
-                              }
-                              // 延迟应用数据，确保iframe已完全加载
-                              // 使用 ref 获取最新的 currentIndex 和 jsonData，避免闭包捕获过时值
-                              setTimeout(() => {
-                                // 从 ref 获取最新值，而不是使用闭包捕获的值
-                                const latestCurrentIndex = currentIndexRef.current;
-                                const latestJsonData = jsonDataRef.current;
-                                
-                                const latestDataIndex = latestCurrentIndex + idx;
-                                const latestHasData = latestJsonData.length > 0 && latestDataIndex < latestJsonData.length;
-                                const latestDisplayIndex = latestHasData ? latestDataIndex : latestCurrentIndex;
-                                
-                                if (latestHasData && latestJsonData[latestDisplayIndex]) {
-                                  applyJsonDataToMultiIframeWrapper(iframe, latestJsonData[latestDisplayIndex], latestDisplayIndex);
+                          >
+                            <iframe
+                              ref={(el) => {
+                                multiIframeRefs.current[idx] = el;
+                              }}
+                              title={`banner-preview-${idx}`}
+                              className="preview-iframe multi-preview-iframe"
+                              srcDoc={buildSrcDoc(htmlContent, cssContent)}
+                              sandbox="allow-same-origin"
+                              style={{
+                                width: templateWidth,
+                                height: templateHeight,
+                                transform: `scale(${scale})`,
+                                transformOrigin: 'top left',
+                              }}
+                              onLoad={(e) => {
+                                const iframe = e.currentTarget;
+                                if (idx === 0) {
+                                  adjustIframeSize();
                                 }
-                              }, 100);
-                            }}
-                          />
-                        </div>
+                                
+                                // 给 iframe 内部添加点击事件，点击任意位置都能激活该产品
+                                try {
+                                  const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+                                  if (iframeDoc) {
+                                    const clickHandler = () => {
+                                      const latestCurrentIndex = currentIndexRef.current;
+                                      const latestJsonData = jsonDataRef.current;
+                                      const latestDataIndex = latestCurrentIndex + idx;
+                                      const latestHasData = latestJsonData.length > 0 && latestDataIndex < latestJsonData.length;
+                                      
+                                      if (latestHasData) {
+                                        handleSelectBanner(latestDataIndex);
+                                      }
+                                    };
+                                    
+                                    // 移除旧的监听器（如果存在）
+                                    iframeDoc.removeEventListener('click', clickHandler);
+                                    // 添加新的监听器
+                                    iframeDoc.addEventListener('click', clickHandler);
+                                  }
+                                } catch (e) {
+                                  // 忽略跨域错误
+                                }
+                                
+                                // 延迟应用数据，确保iframe已完全加载
+                                // 使用 ref 获取最新的 currentIndex 和 jsonData，避免闭包捕获过时值
+                                setTimeout(() => {
+                                  // 从 ref 获取最新值，而不是使用闭包捕获的值
+                                  const latestCurrentIndex = currentIndexRef.current;
+                                  const latestJsonData = jsonDataRef.current;
+                                  
+                                  const latestDataIndex = latestCurrentIndex + idx;
+                                  const latestHasData = latestJsonData.length > 0 && latestDataIndex < latestJsonData.length;
+                                  
+                                  if (latestHasData && latestJsonData[latestDataIndex]) {
+                                    applyJsonDataToMultiIframeWrapper(iframe, latestJsonData[latestDataIndex], latestDataIndex);
+                                  }
+                                }, 100);
+                              }}
+                            />
+                          </div>
+                        ) : (
+                          <div className="banner-placeholder" style={{ minHeight: '100px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <p style={{ color: 'rgba(0, 0, 0, 0.3)', fontSize: '12px' }}>无数据</p>
+                          </div>
+                        )
                       ) : (
                         <div className="banner-placeholder">
                           <p>上传 ZIP 模板文件</p>
@@ -1175,15 +1442,47 @@ export const BannerBatchPage: React.FC = () => {
                 <div className="view-mode-toggle">
                   <button
                     className={`view-mode-btn ${!isMultiView ? 'active' : ''}`}
-                    onClick={() => setIsMultiView(false)}
+                    onClick={() => {
+                      // 多图 → 单图：同步 currentIndex
+                      if (isMultiView) {
+                        setCurrentIndex(selectedBannerIndex ?? currentIndex);
+                        setSelectedBannerIndex(null);
+                      }
+                      setIsMultiView(false);
+                    }}
+                    title="单图模式"
                   >
-                    单图
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <rect x="3" y="3" width="14" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" fill="none"/>
+                    </svg>
                   </button>
                   <button
                     className={`view-mode-btn ${isMultiView ? 'active' : ''}`}
-                    onClick={() => setIsMultiView(true)}
+                    onClick={() => {
+                      // 单图 → 多图：调整 currentIndex 确保能显示尽可能多的产品
+                      if (!isMultiView) {
+                        // 如果数据不足4个，从0开始显示
+                        if (jsonData.length <= 4) {
+                          setCurrentIndex(0);
+                          setSelectedBannerIndex(0);
+                        } else {
+                          // 如果当前索引太靠后，调整到能显示4个产品的位置
+                          const maxStartIndex = Math.max(0, jsonData.length - 4);
+                          const adjustedIndex = Math.min(currentIndex, maxStartIndex);
+                          setCurrentIndex(adjustedIndex);
+                          setSelectedBannerIndex(adjustedIndex);
+                        }
+                      }
+                      setIsMultiView(true);
+                    }}
+                    title="多图模式（2x2）"
                   >
-                    多图
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <rect x="2" y="2" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.5" fill="none"/>
+                      <rect x="11" y="2" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.5" fill="none"/>
+                      <rect x="2" y="11" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.5" fill="none"/>
+                      <rect x="11" y="11" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.5" fill="none"/>
+                    </svg>
                   </button>
                 </div>
                 <p className="view-mode-hint">
@@ -1290,18 +1589,20 @@ export const BannerBatchPage: React.FC = () => {
                             <input
                               type="text"
                               className="field-value-input"
-                              value={selectedFieldValue}
-                              onChange={(e) => {
-                                const newValue = e.target.value;
-                                setSelectedFieldValue(newValue);
-                                updateFieldValue(f.name, newValue);
+                              value="只能通过Json文件修改"
+                              disabled
+                              readOnly
+                              style={{ 
+                                backgroundColor: '#f5f5f5', 
+                                color: '#999',
+                                cursor: 'not-allowed'
                               }}
-                              placeholder="输入图片 URL 或路径"
                               onClick={(e) => e.stopPropagation()}
                             />
                           ) : (
-                            <textarea
-                              className="field-value-textarea"
+                            <input
+                              type="text"
+                              className="field-value-input"
                               value={selectedFieldValue}
                               onChange={(e) => {
                                 const newValue = e.target.value;
@@ -1309,7 +1610,6 @@ export const BannerBatchPage: React.FC = () => {
                                 updateFieldValue(f.name, newValue);
                               }}
                               placeholder="输入文本内容"
-                              rows={2}
                               onClick={(e) => e.stopPropagation()}
                             />
                           )}

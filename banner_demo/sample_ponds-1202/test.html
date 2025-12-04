@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>主图框架 - POND'S Demo</title>
+    <!-- 关联外部 CSS 样式表 -->
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="container">
+      <!-- LOGO：可替换 -->
+      <div class="logo">
+        <img
+          src="./image/logo.png"
+          alt="logo"
+          data-field="logo_src"
+          data-label="LOGO 图片"
+        />
+      </div>
+
+      <!-- 标题区：主标题 + 卖点 -->
+      <div class="title">
+        <div
+          class="maintile"
+          data-field="main_title"
+          data-label="主标题"
+        >
+          10分钟净毛孔
+        </div>
+
+        <div class="benefit">
+          <p
+            class="text"
+            data-field="benefit_text"
+            data-label="卖点文案"
+          >
+             绿旋风泥膜
+          </p>
+          <p
+            class="hilight"
+            data-field="benefit_hilight"
+            data-label="规格高亮"
+          >
+            全新上市
+          </p>
+        </div>
+      </div>
+
+      <!-- 主产品：图片可替换 -->
+      <div class="product_container">
+        <div class="product">
+          <img
+            src="./image/product-2.png"
+            alt="主产品"
+            data-field="product_main_src"
+            data-label="主产品图片"
+          />
+         
+        </div>
+      </div>
+
+      <!-- 赠品模块 -->
+      <div class="gifts">
+        <div class="giftstitle">
+          <p
+            data-field="gift_title_line1"
+            data-label="赠品标题-第一行"
+          >
+            <span><img src="./image/giftboxw.png" alt="" /></span>
+            同款买2送
+          </p>
+          <p
+            data-field="gift_title_line2"
+            data-label="赠品标题-第二行"
+          >
+            粉润莹泽洁面乳30gx2
+          </p>
+        </div>
+
+        <div class="giftproducts">
+          <!-- 如需两个不同赠品，可再拆分为 gift_products_src_1 / _2 -->
+          <img class="giftproductsimg-1" 
+            src="./image/gift-2.png"
+            alt="赠品1"
+            data-field="gift_products_src_1"
+            data-label="赠品图片1"
+          />
+        </div>
+
+        <!-- 中间绑带装饰保持固定，不做 data-field -->
+        <div class="belt">
+          <img src="./image/belt.png" alt="" />
+        </div>
+
+        <div
+          class="remark"
+          data-field="gift_remark"
+          data-label="赠品说明"
+        >
+          下单送超级大礼包 赠品按库存随机发货
+        </div>
+
+        <div class="giftprice">
+          <p>
+            <img src="./image/giftboxr.png" alt="" />
+            价值
+            <span
+              data-field="gift_value"
+              data-label="赠品价值（元）"
+            >
+              36.9
+            </span>
+            元
+          </p>
+        </div>
+      </div>
+
+      <!-- 底部价格条 -->
+      <div class="bottombar">
+        <div class="price_container">
+          <p
+            class="originalprice"
+            data-field="original_price"
+            data-label="京东价（原价）"
+          >
+            京东价:￥75.9
+          </p>
+          <p class="pricetitle">
+            秒杀到手价
+            <!-- 固定文案，如需可改也可以加 data-field -->
+          </p>
+          <p
+          class="price"
+          data-field-int="sec_price_int"
+          data-field-decimal="sec_price_decimal"
+        >
+          <span class="sign">￥</span>
+          <span class="price-int-2">79</span>
+          <span class="price-decimal-2">.9</span>
+        </p>
+        </div>
+
+        <div class="bottominfo">
+          <p
+            class="date"
+            data-field="date_range"
+            data-label="活动时间"
+          >
+            时间:5月1日-5月31日
+          </p>
+          <p
+            class="salespoint"
+            data-field="sales_point"
+            data-label="底部卖点"
+          >
+            限时直降 洁面优选！
+          </p>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

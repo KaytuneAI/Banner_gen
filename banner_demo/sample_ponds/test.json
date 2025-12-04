@@ -1,0 +1,116 @@
+[
+  {
+    "logo_src": "./image/logo.png",
+    "main_title": "温和水润 保湿维稳",
+    "benefit_text": "氨基酸洁颜泡",
+    "benefit_hilight": "150ml",
+
+    "product_main_src": "./image/product.png",
+
+    "gift_title_line1": "同款买2送",
+    "gift_title_line2": "粉润莹泽洁面乳30gx2",
+    "gift_products_src_1": "./image/gift.png",
+    "gift_products_src_2": "./image/gift.png",
+    "gift_remark": "下单送超级大礼包 赠品按库存随机发货",
+    "gift_value": "36.9",
+
+    "original_price": "京东价:￥75.9",
+    "sec_price_int": "29",
+    "sec_price_decimal": ".9",
+
+    "date_range": "5月1日-5月31日",
+    "sales_point": "限时直降 洁面优选!"
+  },
+
+  {
+    "logo_src": "./image/logo.png",
+    "main_title": "控油细致 柔润净爽",
+    "benefit_text": "水杨酸清颜泡",
+    "benefit_hilight": "200ml",
+
+    "product_main_src": "./image/product.png",
+
+    "gift_title_line1": "第2件0元",
+    "gift_title_line2": "油皮必囤洁面乳30g",
+    "gift_products_src_1": "./image/gift.png",
+    "gift_products_src_2": "./image/gift.png",
+    "gift_remark": "赠品按仓库库存随机发放",
+    "gift_value": "29.9",
+
+    "original_price": "京东价:￥89.9",
+    "sec_price_int": "39",
+    "sec_price_decimal": ".9",
+
+    "date_range": "6月1日-6月30日",
+    "sales_point": "油皮救星 夏季清爽推荐"
+  },
+
+  {
+    "logo_src": "./image/logo.png",
+    "main_title": "修护屏障 深层保湿",
+    "benefit_text": "氨基酸精华洁颜泡",
+    "benefit_hilight": "180ml",
+
+    "product_main_src": "./image/product.png",
+
+    "gift_title_line1": "买1送旅行套",
+    "gift_title_line2": "氨基酸洁面20g",
+    "gift_products_src_1": "./image/gift.png",
+    "gift_products_src_2": "./image/gift.png",
+    "gift_remark": "单笔订单限赠1份，送完即止",
+    "gift_value": "45",
+
+    "original_price": "京东价:￥69",
+    "sec_price_int": "39",
+    "sec_price_decimal": ".0",
+
+    "date_range": "618期间",
+    "sales_point": "强修护 清爽不紧绷"
+  },
+
+  {
+    "logo_src": "./image/logo.png",
+    "main_title": "焕亮提色 通透好气色",
+    "benefit_text": "维C亮肤洁颜泡",
+    "benefit_hilight": "220ml",
+
+    "product_main_src": "./image/product.png",
+
+    "gift_title_line1": "前1000名加赠",
+    "gift_title_line2": "亮肤洁面乳30g",
+    "gift_products_src_1": "./image/gift.png",
+    "gift_products_src_2": "./image/gift.png",
+    "gift_remark": "活动名额有限 赠完即止",
+    "gift_value": "39.9",
+
+    "original_price": "京东价:￥99",
+    "sec_price_int": "49",
+    "sec_price_decimal": ".9",
+
+    "date_range": "限时三天",
+    "sales_point": "提亮肤色 爆水修护"
+  },
+
+  {
+    "logo_src": "./image/logo.png",
+    "main_title": "绵密泡沫 深层净彻",
+    "benefit_text": "植萃净颜泡",
+    "benefit_hilight": "200ml",
+
+    "product_main_src": "./image/product.png",
+
+    "gift_title_line1": "买2送2",
+    "gift_title_line2": "净颜洁面乳30gx2",
+    "gift_products_src_1": "./image/gift.png",
+    "gift_products_src_2": "./image/gift.png",
+    "gift_remark": "会员专享赠品，提前加入会员",
+    "gift_value": "35",
+
+    "original_price": "京东价:￥99.9",
+    "sec_price_int": "59",
+    "sec_price_decimal": ".9",
+
+    "date_range": "7月1日-7月15日",
+    "sales_point": "深度清洁 不紧绷干"
+  }
+]

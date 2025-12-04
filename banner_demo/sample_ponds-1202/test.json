@@ -1,0 +1,74 @@
+[
+  {
+    "logo_src": "./image/logo.png",
+    "main_title": "温和清洁 实力祛痘",
+    "benefit_text": "菁纯氨基酸表活",
+    "benefit_hilight": "100%",
+
+    "product_main_src": "./image/product-4.png",
+    "product_main_qty": 2,
+
+    "gift_title_line1": "同款买2送",
+    "gift_title_line2": "粉润莹泽洁面乳30gx2",
+    "gift_products_src_1": "./image/gift-3.png",
+    "gift_products_qty_1": 2,
+
+    "gift_remark": "下单送超级大礼包 赠品按库存随机发货",
+    "gift_value": "36.9",
+
+    "original_price": "京东价:￥75.9",
+    "sec_price_int": "299",
+    "sec_price_decimal": ".9",
+
+    "date_range": "时间:5月1日-5月31日",
+    "sales_point": "限时直降 洁面优选！"
+  },
+
+  {
+    "logo_src": "./image/logo.png",
+    "main_title": "氨基酸型洁面泡泡",
+    "benefit_text": "温和净颜",
+    "benefit_hilight": "深入滋润",
+
+    "product_main_src": "./image/product-3.png",
+    "product_main_qty": 3,
+
+    "gift_title_line1": "同款买2送",
+    "gift_title_line2": "粉润莹泽洁面乳30gx3",
+    "gift_products_src_1": "./image/gift-3.png",
+    "gift_products_qty_1": 3,
+    
+    "gift_remark": "下单送超级大礼包 赠品按库存随机发货",
+    "gift_value": "36.9",
+
+    "original_price": "京东价:￥75.9",
+    "sec_price_int": "299",
+    "sec_price_decimal": ".9",
+
+    "date_range": "时间:5月1日-5月31日",
+    "sales_point": "限时直降 洁面优选！"
+  },
+
+  {
+    "logo_src": "./image/logo.png",
+    "main_title": "10分钟净毛孔",
+    "benefit_text": "绿旋风泥膜",
+    "benefit_hilight": "全新上市",
+
+    "product_main_src": "./image/product-2.png",
+
+    "gift_title_line1": "同款买2送",
+    "gift_title_line2": "粉润莹泽洁面乳30gx2",
+    "gift_products_src_1": "./image/gift-2.png",
+
+    "gift_remark": "下单送超级大礼包 赠品按库存随机发货",
+    "gift_value": "36.9",
+
+    "original_price": "京东价:￥75.9",
+    "sec_price_int": "79",
+    "sec_price_decimal": ".9",
+
+    "date_range": "时间:5月1日-5月31日",
+    "sales_point": "限时直降 洁面优选！"
+  }
+]

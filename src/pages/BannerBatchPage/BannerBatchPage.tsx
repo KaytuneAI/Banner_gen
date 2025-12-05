@@ -157,8 +157,8 @@ export const BannerBatchPage: React.FC = () => {
           fields: result.fields,
           fileName: file.name,
         });
-        // ✅ 清除旧的 JSON 数据，避免新模板使用旧数据
-        setJsonData([]);
+        // ✅ 将模板数据作为第一条 JSON 数据
+        setJsonData([result.templateData]);
         setCurrentIndex(0);
         setSelectedBannerIndex(null);
         setSuccess(result.successMessage);
@@ -238,13 +238,13 @@ export const BannerBatchPage: React.FC = () => {
         fileName: file.name,
       });
       
-      // ✅ 清除旧的 JSON 数据，避免新模板使用旧数据
+      // ✅ 使用 ZIP 处理后的 JSON 数据（第一条是模板数据）
       if (result.jsonData.length > 0) {
         setJsonData(result.jsonData);
         setCurrentIndex(0);
         setSelectedBannerIndex(isMultiView ? 0 : null);
       } else {
-        // 如果 ZIP 中没有 JSON 数据，也要清除旧的 JSON 数据
+        // 如果 ZIP 处理失败，至少包含模板数据
         setJsonData([]);
         setCurrentIndex(0);
         setSelectedBannerIndex(null);
@@ -696,7 +696,7 @@ export const BannerBatchPage: React.FC = () => {
       setCurrentIndex(0);
       setSelectedBannerIndex(isMultiView ? 0 : null);
       setSuccess(`成功加载 ${parsed.length} 条数据`);
-      // 应用第一条数据到预览
+      // 应用第一条数据到预览（统一使用 JSON 处理逻辑）
       if (parsed.length > 0) {
         applyJsonDataToIframe(parsed[0], 0);
       }
@@ -760,52 +760,7 @@ export const BannerBatchPage: React.FC = () => {
   useEffect(() => {
     if (!isMultiView && jsonData.length > 0 && currentIndex >= 0 && currentIndex < jsonData.length) {
       const timer = setTimeout(() => {
-        // 如果是第一个索引（索引0），且是空对象，重置 iframe 到原始 HTML 内容
-        if (currentIndex === 0 && Object.keys(jsonData[currentIndex]).length === 0) {
-          // 重新设置预览和导出 iframe 的 srcdoc，重置到原始 HTML
-          if (htmlContent) {
-            const srcDoc = buildSrcDoc(htmlContent, cssContent);
-            
-            // 重置预览 iframe
-            if (previewIframeRef.current) {
-              previewIframeRef.current.srcdoc = srcDoc;
-            }
-            
-            // 重置导出 iframe
-            if (iframeRef.current) {
-              iframeRef.current.srcdoc = srcDoc;
-              
-              // 等待 iframe 加载完成后，恢复选中字段的值（如果有）
-              const loadHandler = () => {
-                if (selectedField && previewIframeRef.current) {
-                  try {
-                    const iframeDoc = previewIframeRef.current.contentDocument || previewIframeRef.current.contentWindow?.document;
-                    if (iframeDoc) {
-                      const element = iframeDoc.querySelector(`[data-field="${selectedField}"]`) as HTMLElement;
-                      if (element) {
-                        if (element.tagName === "IMG") {
-                          setSelectedFieldValue((element as HTMLImageElement).src || "");
-                        } else {
-                          setSelectedFieldValue(element.textContent?.trim() || "");
-                        }
-                      }
-                    }
-                  } catch (e) {
-                    // 忽略错误
-                  }
-                }
-                if (iframeRef.current) {
-                  iframeRef.current.removeEventListener('load', loadHandler);
-                }
-              };
-              
-              if (iframeRef.current) {
-                iframeRef.current.addEventListener('load', loadHandler);
-              }
-            }
-          }
-        } else {
-          // 对于其他索引，正常应用 JSON 数据
+        // 统一使用 JSON 处理逻辑，即使是第一条（模板数据）也通过 applyJsonDataToIframe 处理
         applyJsonDataToIframe(jsonData[currentIndex], currentIndex);
         
         // 恢复当前索引的选中字段值（如果有编辑过）
@@ -830,7 +785,6 @@ export const BannerBatchPage: React.FC = () => {
                 }
               } catch (e) {
                 // 忽略错误
-                }
               }
             }
           }
@@ -838,7 +792,7 @@ export const BannerBatchPage: React.FC = () => {
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [jsonData, currentIndex, applyJsonDataToIframe, selectedField, editedValues, htmlContent, cssContent]);
+  }, [jsonData, currentIndex, applyJsonDataToIframe, selectedField, editedValues, htmlContent, cssContent, isMultiView]);
 
   // 切换到上一条
   const handlePrev = () => {
@@ -967,93 +921,8 @@ export const BannerBatchPage: React.FC = () => {
       const minute = String(now.getMinutes()).padStart(2, '0');
       const timestamp = `${year}${month}${day}${hour}${minute}`;
 
-      // 1. 首先生成HTML模板（纯模板，不应用JSON数据）
-      // 检查第一个是否是空对象（纯模板）
-      const hasTemplateAsFirst = jsonData.length > 0 && Object.keys(jsonData[0]).length === 0;
-      
-      // 如果第一个不是空对象，或者没有JSON数据，需要生成模板
-      if (!hasTemplateAsFirst || jsonData.length === 0) {
-        // 重置导出 iframe 到原始 HTML 内容（不应用JSON数据）
-        if (iframeRef.current && htmlContent) {
-          iframeRef.current.srcdoc = buildSrcDoc(htmlContent, cssContent);
-        }
-        
-        // 等待 iframe 加载完成
-        await new Promise((resolve) => setTimeout(resolve, 500));
-
-        const iframe = iframeRef.current;
-        if (iframe) {
-          const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-          if (iframeDoc) {
-            // 等待字体加载完成
-            await waitForIframeFonts(iframeDoc);
-            
-            // 清除所有 highlight，确保导出的图片没有高亮印记
-            clearExportIframeHighlights();
-            
-            const container = iframeDoc.querySelector('.container') as HTMLElement;
-            const exportElement = container || iframeDoc.body;
-            if (exportElement) {
-              try {
-                const dataUrl = await exportNodeToPngDataUrl(exportElement, { fontEmbedCSS: cssContent });
-                const response = await fetch(dataUrl);
-                const blob = await response.blob();
-                
-                // 第一个文件命名为 template_时间戳.png
-                const fileName = `template_${timestamp}.png`;
-                zip.file(fileName, blob);
-                successCount++;
-                bannerIndex++;
-              } catch (err) {
-                console.error(`导出模板失败:`, err);
-              }
-            }
-          }
-        }
-      } else {
-        // 第一个是空对象，使用当前iframe状态（已经是纯模板）
-        setCurrentIndex(0);
-        
-        // 等待 iframe 加载完成（如果还没加载）
-        await new Promise((resolve) => setTimeout(resolve, 500));
-
-        const iframe = iframeRef.current;
-        if (iframe) {
-          const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-          if (iframeDoc) {
-            // 等待字体加载完成
-            await waitForIframeFonts(iframeDoc);
-            
-            // 清除所有 highlight，确保导出的图片没有高亮印记
-            clearExportIframeHighlights();
-            
-            const container = iframeDoc.querySelector('.container') as HTMLElement;
-            const exportElement = container || iframeDoc.body;
-            if (exportElement) {
-              try {
-                const dataUrl = await exportNodeToPngDataUrl(exportElement, { fontEmbedCSS: cssContent });
-                const response = await fetch(dataUrl);
-                const blob = await response.blob();
-                
-                // 第一个文件命名为 template_时间戳.png
-                const fileName = `template_${timestamp}.png`;
-                zip.file(fileName, blob);
-                successCount++;
-                bannerIndex++;
-              } catch (err) {
-                console.error(`导出模板失败:`, err);
-              }
-            }
-          }
-        }
-      }
-
-      // 2. 然后生成所有JSON数据项
+      // 1. 生成所有数据项（包括第一条模板数据）
       for (let i = 0; i < jsonData.length; i++) {
-        // 跳过第一个空对象（已经在上面处理了）
-        if (i === 0 && Object.keys(jsonData[i]).length === 0) {
-          continue;
-        }
         
         bannerIndex++; // 实际生成的文件序号从1开始（模板已占第1个）
         setCurrentIndex(i);
@@ -1083,10 +952,13 @@ export const BannerBatchPage: React.FC = () => {
 
         const row = jsonData[i];
         
-        // 如果有 id，使用 id_时间戳，否则使用 banner_序号_时间戳（序号从1开始）
-        const fileName = row.id 
-          ? `${row.id}_${timestamp}.png`
-          : `banner_${bannerIndex}_${timestamp}.png`;
+        // 第一条是模板数据，命名为 template_时间戳.png
+        // 其他数据如果有 id，使用 id_时间戳，否则使用 banner_序号_时间戳（序号从1开始）
+        const fileName = i === 0
+          ? `template_${timestamp}.png`
+          : (row.id 
+            ? `${row.id}_${timestamp}.png`
+            : `banner_${bannerIndex}_${timestamp}.png`);
 
         try {
           // 导出为 Data URL
@@ -1117,11 +989,9 @@ export const BannerBatchPage: React.FC = () => {
         document.body.removeChild(a);
         URL.revokeObjectURL(a.href);
 
-        // 计算实际生成的数量：1个模板 + JSON数据数量
-        const templateCount = 1; // 总是生成1个模板
-        const dataCount = jsonData.length > 0 && Object.keys(jsonData[0]).length === 0 
-          ? jsonData.length - 1  // 如果第一个是空对象，减去1
-          : jsonData.length;      // 否则使用全部数量
+        // 计算实际生成的数量（第一条是模板数据，其余是JSON数据）
+        const templateCount = 1; // 第一条是模板数据
+        const dataCount = jsonData.length > 1 ? jsonData.length - 1 : 0; // 除了第一条模板数据外的数据项
         setSuccess(`成功生成 ${successCount} 张 Banner（${templateCount} 个模板 + ${dataCount} 个数据项），已打包为 ZIP 文件`);
 
         // ✅ 生成完成后，把 currentIndex 复位，避免 2×2 预览全部指到最后一张

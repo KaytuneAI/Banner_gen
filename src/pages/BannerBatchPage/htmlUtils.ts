@@ -1,6 +1,120 @@
 /**
  * HTML/CSS 处理工具函数
  */
+import { BannerData } from "../../types";
+
+// 从 HTML 模板中提取字段值，生成 BannerData 对象
+export const extractTemplateDataFromHtml = (html: string): BannerData => {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, "text/html");
+  const templateData: BannerData = {};
+
+  // 1. 提取普通字段（data-field）
+  doc.querySelectorAll<HTMLElement>("[data-field]").forEach((el) => {
+    const fieldName = el.getAttribute("data-field");
+    if (!fieldName) return;
+
+    // 跳过已经在 templateData 中的字段（避免重复）
+    if (templateData[fieldName] !== undefined) return;
+
+    if (el.tagName === "IMG") {
+      const img = el as HTMLImageElement;
+      templateData[fieldName] = img.src || "";
+    } else {
+      // 对于文本元素，提取文本内容
+      const textContent = el.textContent?.trim() || el.innerText?.trim() || "";
+      if (textContent) {
+        templateData[fieldName] = textContent;
+      }
+    }
+  });
+
+  // 2. 特殊处理价格字段（data-field-int 和 data-field-decimal）
+  doc.querySelectorAll<HTMLElement>("[data-field-int]").forEach((el) => {
+    const intName = el.getAttribute("data-field-int");
+    const decimalName = el.getAttribute("data-field-decimal");
+
+    if (intName) {
+      // 尝试从新的价格结构读取
+      const priceInt2 = el.querySelector('.price-int-2') as HTMLElement;
+      const priceInt3 = el.querySelector('.price-int-3') as HTMLElement;
+      
+      let intValue = '';
+      if (priceInt2 || priceInt3) {
+        intValue = (priceInt2?.textContent || priceInt3?.textContent || '').trim();
+      } else {
+        // 回退到旧逻辑：sign 后的文本节点
+        const signNode = el.querySelector('.sign');
+        if (signNode && signNode.nextSibling) {
+          intValue = signNode.nextSibling.nodeValue?.trim() || '';
+        }
+      }
+      
+      if (intValue) {
+        templateData[intName] = intValue;
+      }
+    }
+
+    if (decimalName) {
+      // 尝试从新的价格结构读取
+      const priceDecimal2 = el.querySelector('.price-decimal-2') as HTMLElement;
+      const priceDecimal3 = el.querySelector('.price-decimal-3') as HTMLElement;
+      
+      let decimalValue = '';
+      if (priceDecimal2 || priceDecimal3) {
+        decimalValue = (priceDecimal2?.textContent || priceDecimal3?.textContent || '').trim();
+        // 去掉前导的点号（如果有）
+        decimalValue = decimalValue.replace(/^\./, '');
+      } else {
+        // 回退到旧逻辑：.decimal span
+        const decimalNode = el.querySelector('.decimal');
+        if (decimalNode) {
+          decimalValue = decimalNode.textContent?.trim() || '';
+          decimalValue = decimalValue.replace(/^\./, '');
+        }
+      }
+      
+      if (decimalValue) {
+        templateData[decimalName] = decimalValue;
+      }
+    }
+  });
+
+  // 3. 特殊处理主产品图片数组（product_main_src）
+  const productContainer = doc.querySelector(".product");
+  if (productContainer) {
+    const productImgs = Array.from(productContainer.querySelectorAll("img[data-field='product_main_src']")) as HTMLImageElement[];
+    if (productImgs.length > 0) {
+      const visibleImgs = productImgs.filter(img => img.style.display !== 'none');
+      if (visibleImgs.length > 0) {
+        const srcs = visibleImgs.map(img => img.src).filter(src => src);
+        if (srcs.length === 1) {
+          templateData.product_main_src = srcs[0];
+        } else if (srcs.length > 1) {
+          templateData.product_main_src = srcs;
+        }
+        templateData.product_main_qty = visibleImgs.length;
+      }
+    }
+  }
+
+  // 4. 特殊处理赠品图片（gift_products_src）
+  const giftContainer = doc.querySelector(".giftproducts");
+  if (giftContainer) {
+    const giftImgs = Array.from(giftContainer.querySelectorAll("img")) as HTMLImageElement[];
+    if (giftImgs.length > 0) {
+      const srcs = giftImgs.map(img => img.src).filter(src => src);
+      if (srcs.length === 1) {
+        templateData.gift_products_src = srcs[0];
+      } else if (srcs.length > 1) {
+        templateData.gift_products_src = srcs;
+      }
+      templateData.gift_products_qty = giftImgs.length;
+    }
+  }
+
+  return templateData;
+};
 
 // 从 HTML 中提取 head 中的 link 标签（用于外部 CSS）
 export const extractLinkTags = (html: string): string => {

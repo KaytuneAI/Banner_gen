@@ -2,8 +2,7 @@
  * 文件上传处理函数
  */
 import { TemplateField } from "./types";
-import { extractCssFromHtml, extractTemplateDataFromHtml } from "./htmlUtils";
-import { BannerData } from "../../types";
+import { extractCssFromHtml } from "./htmlUtils";
 
 /**
  * 处理 HTML 文件上传
@@ -14,7 +13,6 @@ export const handleHtmlUpload = async (
     html: string;
     css?: string;
     fields: TemplateField[];
-    templateData: BannerData;
     successMessage: string;
   }) => void,
   onError: (message: string) => void
@@ -58,9 +56,6 @@ export const handleHtmlUpload = async (
         const extractedCss = extractCssFromHtml(rawHtml);
         const hasLinkCss = /<link[^>]*rel\s*=\s*["']stylesheet["'][^>]*>/i.test(rawHtml);
         
-        // 4. 从模板中提取字段值，生成第一条 JSON 数据
-        const templateData = extractTemplateDataFromHtml(rawHtml);
-        
         // 构建成功消息
         let successMsg = `成功加载 HTML 模板: ${file.name}`;
         if (fieldMap.size > 0) {
@@ -83,7 +78,6 @@ export const handleHtmlUpload = async (
           html: rawHtml,
           css: extractedCss || undefined,
           fields: Array.from(fieldMap.values()),
-          templateData,
           successMessage: successMsg,
         });
         

@@ -2,12 +2,15 @@ import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMe
 import JSZip from "jszip";
 import { parseJsonFile } from "../../utils/fileHelpers";
 import { exportNodeToPngDataUrl } from "../../utils/htmlExport";
-import { BannerData } from "../../types";
+import { BannerData, BannerRenderData } from "../../types";
 import { TemplateField } from "./types";
 import { buildSrcDoc, extractCssFromHtml } from "./htmlUtils";
 import { processZipFile } from "./zipHandler";
 import { handleHtmlUpload as handleHtmlUploadUtil, handleCssUpload as handleCssUploadUtil } from "./fileHandlers";
 import { applyJsonDataToIframe as applyJsonDataToIframeUtil, applyJsonDataToMultiIframe as applyJsonDataToMultiIframeUtil, updatePriceFields } from "./dataApplier";
+import { parseFirstSheet, ParsedSheet, getFirstVisibleSheetName, sheetToVisibleRawRows, sheetToVisibleJson } from "../../utils/excelParser";
+import { detectOfferSheet } from "../../utils/offerDetector";
+import { parseRowPerSkuSheet, ExcelRowData } from "../../utils/offerRowPerSkuParser";
 import "./BannerBatchPage.css";
 
 export const BannerBatchPage: React.FC = () => {
@@ -59,6 +62,7 @@ export const BannerBatchPage: React.FC = () => {
   const cssInputRef = useRef<HTMLInputElement>(null);
   const jsonInputRef = useRef<HTMLInputElement>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
+  const excelInputRef = useRef<HTMLInputElement>(null);
   // 导出专用的 iframe ref（始终存在，隐藏）
   const iframeRef = useRef<HTMLIFrameElement>(null);
   // 单图预览用的 iframe ref
@@ -157,8 +161,8 @@ export const BannerBatchPage: React.FC = () => {
           fields: result.fields,
           fileName: file.name,
         });
-        // ✅ 将模板数据作为第一条 JSON 数据
-        setJsonData([result.templateData]);
+        // ✅ 清除旧的 JSON 数据，避免新模板使用旧数据
+        setJsonData([]);
         setCurrentIndex(0);
         setSelectedBannerIndex(null);
         setSuccess(result.successMessage);
@@ -238,13 +242,13 @@ export const BannerBatchPage: React.FC = () => {
         fileName: file.name,
       });
       
-      // ✅ 使用 ZIP 处理后的 JSON 数据（第一条是模板数据）
+      // ✅ 清除旧的 JSON 数据，避免新模板使用旧数据
       if (result.jsonData.length > 0) {
         setJsonData(result.jsonData);
         setCurrentIndex(0);
         setSelectedBannerIndex(isMultiView ? 0 : null);
       } else {
-        // 如果 ZIP 处理失败，至少包含模板数据
+        // 如果 ZIP 中没有 JSON 数据，也要清除旧的 JSON 数据
         setJsonData([]);
         setCurrentIndex(0);
         setSelectedBannerIndex(null);
@@ -260,6 +264,289 @@ export const BannerBatchPage: React.FC = () => {
     // 清空 input
     if (zipInputRef.current) {
       zipInputRef.current.value = "";
+    }
+  };
+
+  // 处理 Excel 上传
+  const handleExcelUpload = async (file: File | null) => {
+    if (!file) {
+      return;
+    }
+
+    setError("");
+    setSuccess("");
+
+    try {
+      // 1. 解析 Excel 文件（初步解析，用于扫描表头）
+      const parsedSheet = await parseFirstSheet(file);
+      console.log("解析的 Excel sheet:", parsedSheet);
+      console.log("Sheet 名称:", parsedSheet.sheetName);
+      console.log("原始行数据（前10行）:", parsedSheet.rawRows);
+
+      // 2. 检测是否为 offer 表（会扫描前10行）
+      const detection = detectOfferSheet(parsedSheet);
+      console.log("检测结果:", detection);
+      console.log("找到的表头行号:", detection.headerRowIndex);
+
+      if (detection.kind === "UNKNOWN") {
+        setError("未识别为可用的 offer 编排表（ROW_PER_SKU），请检查表头字段。已扫描前10行。");
+        return;
+      }
+
+      // 3. 如果表头行不是第一行，需要重新解析数据
+      let finalParsedSheet = parsedSheet;
+      if (detection.headerRowIndex !== undefined && detection.headerRowIndex !== 0) {
+        // 重新解析，从找到的表头行开始
+        const XLSX = await import("xlsx");
+        const reader = new FileReader();
+        const reparsePromise = new Promise<ParsedSheet>((resolve, reject) => {
+          reader.onload = (e) => {
+            try {
+              const data = new Uint8Array(e.target?.result as ArrayBuffer);
+              const workbook = XLSX.read(data, { type: "array" });
+              
+              // 使用新的工具函数获取第一个可见的 sheet
+              const targetSheetName = getFirstVisibleSheetName(workbook);
+              if (!targetSheetName) {
+                throw new Error("No visible sheet found in workbook");
+              }
+              const sheet = workbook.Sheets[targetSheetName];
+
+              // 获取所有原始行（不限制行数，确保获取完整数据）
+              const allRawRowsForHeader = XLSX.utils.sheet_to_json<any[]>(sheet, {
+                defval: "",
+                header: 1,
+              }) as any[][];
+              
+              // 找到表头行在原始 sheet 中的实际行号
+              let actualHeaderRowIndex = 0;
+              let visibleRowCount = 0;
+              for (let i = 0; i < allRawRowsForHeader.length; i++) {
+                const rowMeta = sheet["!rows"]?.[i];
+                const isHidden = rowMeta && rowMeta.hidden;
+                if (!isHidden) {
+                  if (visibleRowCount === detection.headerRowIndex!) {
+                    actualHeaderRowIndex = i;
+                    break;
+                  }
+                  visibleRowCount++;
+                }
+              }
+              
+              // 获取表头行的完整内容（从原始行中获取，确保包含所有列）
+              const headerRow = allRawRowsForHeader[actualHeaderRowIndex];
+              const headerRowValues = headerRow ? headerRow.map((cell: any) => String(cell || "").trim()) : [];
+              console.log("表头行的内容（完整）:", headerRowValues);
+              console.log("表头行的列数:", headerRowValues.length);
+
+              console.log("重新解析：表头行在可见行中的索引:", detection.headerRowIndex, "在原始 sheet 中的行号:", actualHeaderRowIndex);
+
+              // 手动映射：获取所有原始行数据（和表头行使用同一个数据源，确保列数一致）
+              const allRawRowsForData = allRawRowsForHeader;
+              
+              // 从表头行的下一行开始获取数据行，只处理可见的行
+              const dataStartRow = actualHeaderRowIndex + 1;
+              const mappedJson = allRawRowsForData
+                .map((row, rowIndex) => ({ row, rowIndex }))
+                .filter(({ row, rowIndex }) => {
+                  // 只处理表头行之后的行
+                  if (rowIndex <= actualHeaderRowIndex) return false;
+                  // 过滤隐藏行
+                  const rowMeta = sheet["!rows"]?.[rowIndex];
+                  const isHidden = rowMeta && rowMeta.hidden;
+                  return !isHidden;
+                })
+                .map(({ row, rowIndex }) => {
+                  // 手动映射字段名
+                  // 确保使用表头行的所有列，即使数据行的列数不同
+                  const mappedRow: Record<string, any> = {};
+                  
+                  // 处理重复字段名：
+                  // 1. 第一次遍历：收集所有字段的值（按列索引顺序）
+                  const fieldValuesByCol: Array<{ headerName: string; value: any; colIdx: number }> = [];
+                  
+                  for (let colIdx = 0; colIdx < headerRowValues.length; colIdx++) {
+                    const headerName = headerRowValues[colIdx];
+                    if (headerName) {  // 只映射有名称的列
+                      // 确保 colIdx 在 row 数组范围内
+                      const cellValue = colIdx < row.length ? row[colIdx] : undefined;
+                      
+                      // 检查值是否为空
+                      const hasValue = cellValue !== null && cellValue !== undefined && cellValue !== "" && String(cellValue).trim() !== "";
+                      
+                      fieldValuesByCol.push({ headerName, value: cellValue, colIdx });
+                      
+                      // 调试第一行数据
+                      if (rowIndex === actualHeaderRowIndex + 1 && colIdx < 20) {
+                        console.log(`  列 ${colIdx} (${headerName}):`, cellValue, hasValue ? '(有值)' : '(空值)');
+                      }
+                    }
+                  }
+                  
+                  // 2. 第二次遍历：处理重复字段名
+                  // 统计每个字段名出现的次数和位置
+                  const fieldNameCount = new Map<string, number>();
+                  const fieldNameIndices = new Map<string, number[]>();
+                  
+                  fieldValuesByCol.forEach(({ headerName, colIdx }) => {
+                    const count = fieldNameCount.get(headerName) || 0;
+                    fieldNameCount.set(headerName, count + 1);
+                    
+                    if (!fieldNameIndices.has(headerName)) {
+                      fieldNameIndices.set(headerName, []);
+                    }
+                    fieldNameIndices.get(headerName)!.push(colIdx);
+                  });
+                  
+                  // 3. 第三次遍历：生成最终字段名并添加有值的字段
+                  fieldValuesByCol.forEach(({ headerName, value, colIdx }) => {
+                    // 检查值是否为空
+                    const hasValue = value !== null && value !== undefined && value !== "" && String(value).trim() !== "";
+                    
+                    if (!hasValue) {
+                      return; // 跳过空值
+                    }
+                    
+                    // 确定最终字段名
+                    let finalFieldName = headerName;
+                    const count = fieldNameCount.get(headerName)!;
+                    
+                    if (count > 1) {
+                      // 有重复字段名，需要添加序号
+                      const indices = fieldNameIndices.get(headerName)!;
+                      const position = indices.indexOf(colIdx);
+                      
+                      // 检查其他同名字段是否有值
+                      const otherValues = indices
+                        .filter(idx => idx !== colIdx)
+                        .map(idx => {
+                          const item = fieldValuesByCol.find(f => f.colIdx === idx && f.headerName === headerName);
+                          return item ? item.value : null;
+                        })
+                        .filter(v => v !== null && v !== undefined && v !== "" && String(v).trim() !== "");
+                      
+                      // 如果其他同名字段也有值，添加序号
+                      if (otherValues.length > 0) {
+                        finalFieldName = `${headerName}${position + 1}`;
+                      }
+                      // 如果其他同名字段都没有值，使用原始字段名（不加序号）
+                    }
+                    
+                    mappedRow[finalFieldName] = value; // 保留原始类型
+                  });
+                  
+                  if (rowIndex === actualHeaderRowIndex + 1) {
+                    // 只打印第一行数据的调试信息
+                    console.log("第一行数据映射 - 表头字段数:", headerRowValues.filter(h => h).length);
+                    console.log("第一行数据映射 - 数据行列数:", row.length);
+                    console.log("第一行数据映射 - 映射后字段数:", Object.keys(mappedRow).length);
+                    console.log("第一行数据映射 - 所有字段名:", Object.keys(mappedRow));
+                    console.log("第一行数据映射 - 是否包含'主图brief':", '主图brief' in mappedRow);
+                    console.log("第一行数据映射 - 是否包含'主图brief1':", '主图brief1' in mappedRow);
+                    if ('主图brief' in mappedRow) {
+                      console.log("第一行数据映射 - '主图brief'的值:", mappedRow['主图brief']);
+                    }
+                    if ('主图brief1' in mappedRow) {
+                      console.log("第一行数据映射 - '主图brief1'的值:", mappedRow['主图brief1']);
+                    }
+                  }
+                  return mappedRow;
+                });
+              
+              console.log("重新解析：可见数据行数:", mappedJson.length);
+              console.log("重新解析后的数据（前3行）:", mappedJson.slice(0, 3));
+              if (mappedJson.length > 0) {
+                const firstRowKeys = Object.keys(mappedJson[0]);
+                console.log("第一行的字段名（数量）:", firstRowKeys.length);
+                console.log("第一行的所有字段名:", firstRowKeys);
+                console.log("表头行的字段名（数量）:", headerRowValues.filter(h => h).length);
+                console.log("表头行的所有字段名:", headerRowValues.filter(h => h));
+              }
+              
+              resolve({
+                sheetName: targetSheetName,
+                headers: headerRowValues,
+                headerRowIndex: actualHeaderRowIndex, // 保存原始行号
+                rows: mappedJson,
+                rawRows: parsedSheet.rawRows,  // 保留原始扫描用的 rawRows
+              });
+            } catch (err) {
+              reject(err);
+            }
+          };
+          reader.onerror = reject;
+          reader.readAsArrayBuffer(file);
+        });
+        finalParsedSheet = await reparsePromise;
+        console.log("重新解析后的数据（从第", detection.headerRowIndex + 1, "行开始）:", finalParsedSheet);
+      }
+
+      // 4. 解析为 Excel 原始数据（包含所有字段，过滤空值）
+      console.log("准备解析数据，finalParsedSheet.rows 数量:", finalParsedSheet.rows.length);
+      console.log("使用的字段名:", {
+        nameColumn: detection.nameColumn,
+        priceColumn: detection.priceColumn,
+        briefColumn: detection.briefColumn,
+      });
+      console.log("finalParsedSheet.headers:", finalParsedSheet.headers);
+      console.log("前3行原始数据:", finalParsedSheet.rows.slice(0, 3));
+      console.log("第一行的所有字段名:", Object.keys(finalParsedSheet.rows[0] || {}));
+      
+      const excelData = parseRowPerSkuSheet(finalParsedSheet, detection);
+      console.log("解析的 Excel 数据:", excelData);
+      console.log("解析后的数据条数:", excelData.length);
+
+      if (excelData.length === 0) {
+        // 提供更详细的错误信息
+        const rowCount = finalParsedSheet.rows.length;
+        const nameColumn = detection.nameColumn;
+        const nonEmptyRows = finalParsedSheet.rows.filter(row => row[nameColumn || ""]).length;
+        setError(`未能从 Excel 中提取到有效数据。总行数: ${rowCount}，包含"${nameColumn}"的行数: ${nonEmptyRows}。请检查数据行或表头识别是否正确。`);
+        return;
+      }
+
+      // 5. 显示成功消息和预览（前3条）
+      const headerInfo = detection.headerRowIndex !== undefined && detection.headerRowIndex > 0 
+        ? `（表头在第${detection.headerRowIndex + 1}行）`
+        : "";
+      setSuccess(`成功解析 ${excelData.length} 条数据（ROW_PER_SKU 模式${headerInfo}）`);
+      console.log("前3条数据预览:", excelData.slice(0, 3));
+
+      // 6. 自动下载 JSON 文件
+      try {
+        const jsonString = JSON.stringify(excelData, null, 2); // 格式化 JSON，缩进2空格
+        const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        
+        // 生成文件名：使用原文件名 + 时间戳
+        const originalFileName = file.name.replace(/\.[^/.]+$/, ""); // 去掉扩展名
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5); // 格式：2024-01-01T12-00-00
+        link.download = `${originalFileName}_ExcelData_${timestamp}.json`;
+        
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        
+        console.log("JSON 文件已下载:", link.download);
+      } catch (downloadErr) {
+        console.warn("下载 JSON 文件失败:", downloadErr);
+        // 下载失败不影响主流程，只记录警告
+      }
+
+      // TODO: 后续 Brief 可以将 excelData 转换为 BannerData[] 并应用到模板
+
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Excel 文件处理失败";
+      setError(message);
+      console.error("Excel 处理错误:", err);
+    }
+
+    // 清空 input
+    if (excelInputRef.current) {
+      excelInputRef.current.value = "";
     }
   };
 
@@ -696,7 +983,7 @@ export const BannerBatchPage: React.FC = () => {
       setCurrentIndex(0);
       setSelectedBannerIndex(isMultiView ? 0 : null);
       setSuccess(`成功加载 ${parsed.length} 条数据`);
-      // 应用第一条数据到预览（统一使用 JSON 处理逻辑）
+      // 应用第一条数据到预览
       if (parsed.length > 0) {
         applyJsonDataToIframe(parsed[0], 0);
       }
@@ -756,43 +1043,34 @@ export const BannerBatchPage: React.FC = () => {
     }
   }, [isMultiView, jsonData, currentIndex, htmlContent, applyJsonDataToMultiIframeWrapper, selectedBannerIndex]);
 
-  // 当前数据变化时，应用到 iframe（单图模式）
+  // Effect 1: 数据应用 (Data Application) - 仅负责在数据变化时应用数据到 iframe
   useEffect(() => {
     if (!isMultiView && jsonData.length > 0 && currentIndex >= 0 && currentIndex < jsonData.length) {
       const timer = setTimeout(() => {
-        // 统一使用 JSON 处理逻辑，即使是第一条（模板数据）也通过 applyJsonDataToIframe 处理
-        applyJsonDataToIframe(jsonData[currentIndex], currentIndex);
-        
-        // 恢复当前索引的选中字段值（如果有编辑过）
-        if (selectedField) {
-          const edits = editedValues[currentIndex];
-          if (edits && edits[selectedField] !== undefined) {
-            setSelectedFieldValue(edits[selectedField]);
-          } else {
-            // 从预览 iframe 中读取当前值
+        // 如果是第一个索引（索引0），且是空对象，重置 iframe 到原始 HTML 内容
+        if (currentIndex === 0 && Object.keys(jsonData[currentIndex]).length === 0) {
+          // 重新设置预览和导出 iframe 的 srcdoc，重置到原始 HTML
+          if (htmlContent) {
+            const srcDoc = buildSrcDoc(htmlContent, cssContent);
+            
+            // 重置预览 iframe
             if (previewIframeRef.current) {
-              try {
-                const iframeDoc = previewIframeRef.current.contentDocument || previewIframeRef.current.contentWindow?.document;
-                if (iframeDoc) {
-                  const element = iframeDoc.querySelector(`[data-field="${selectedField}"]`) as HTMLElement;
-                  if (element) {
-                    if (element.tagName === "IMG") {
-                      setSelectedFieldValue((element as HTMLImageElement).src || "");
-                    } else {
-                      setSelectedFieldValue(element.textContent?.trim() || "");
-                    }
-                  }
-                }
-              } catch (e) {
-                // 忽略错误
-              }
+              previewIframeRef.current.srcdoc = srcDoc;
+            }
+            
+            // 重置导出 iframe
+            if (iframeRef.current) {
+              iframeRef.current.srcdoc = srcDoc;
             }
           }
+        } else {
+          // 对于其他索引，正常应用 JSON 数据
+          applyJsonDataToIframe(jsonData[currentIndex], currentIndex);
         }
       }, 100);
       return () => clearTimeout(timer);
     }
-  }, [jsonData, currentIndex, applyJsonDataToIframe, selectedField, editedValues, htmlContent, cssContent, isMultiView]);
+  }, [jsonData, currentIndex, applyJsonDataToIframe, editedValues, htmlContent, cssContent, isMultiView]);
 
   // 切换到上一条
   const handlePrev = () => {
@@ -921,8 +1199,93 @@ export const BannerBatchPage: React.FC = () => {
       const minute = String(now.getMinutes()).padStart(2, '0');
       const timestamp = `${year}${month}${day}${hour}${minute}`;
 
-      // 1. 生成所有数据项（包括第一条模板数据）
+      // 1. 首先生成HTML模板（纯模板，不应用JSON数据）
+      // 检查第一个是否是空对象（纯模板）
+      const hasTemplateAsFirst = jsonData.length > 0 && Object.keys(jsonData[0]).length === 0;
+      
+      // 如果第一个不是空对象，或者没有JSON数据，需要生成模板
+      if (!hasTemplateAsFirst || jsonData.length === 0) {
+        // 重置导出 iframe 到原始 HTML 内容（不应用JSON数据）
+        if (iframeRef.current && htmlContent) {
+          iframeRef.current.srcdoc = buildSrcDoc(htmlContent, cssContent);
+        }
+        
+        // 等待 iframe 加载完成
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        const iframe = iframeRef.current;
+        if (iframe) {
+          const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+          if (iframeDoc) {
+            // 等待字体加载完成
+            await waitForIframeFonts(iframeDoc);
+            
+            // 清除所有 highlight，确保导出的图片没有高亮印记
+            clearExportIframeHighlights();
+            
+            const container = iframeDoc.querySelector('.container') as HTMLElement;
+            const exportElement = container || iframeDoc.body;
+            if (exportElement) {
+              try {
+                const dataUrl = await exportNodeToPngDataUrl(exportElement, { fontEmbedCSS: cssContent });
+                const response = await fetch(dataUrl);
+                const blob = await response.blob();
+                
+                // 第一个文件命名为 template_时间戳.png
+                const fileName = `template_${timestamp}.png`;
+                zip.file(fileName, blob);
+                successCount++;
+                bannerIndex++;
+              } catch (err) {
+                console.error(`导出模板失败:`, err);
+              }
+            }
+          }
+        }
+      } else {
+        // 第一个是空对象，使用当前iframe状态（已经是纯模板）
+        setCurrentIndex(0);
+        
+        // 等待 iframe 加载完成（如果还没加载）
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        const iframe = iframeRef.current;
+        if (iframe) {
+          const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+          if (iframeDoc) {
+            // 等待字体加载完成
+            await waitForIframeFonts(iframeDoc);
+            
+            // 清除所有 highlight，确保导出的图片没有高亮印记
+            clearExportIframeHighlights();
+            
+            const container = iframeDoc.querySelector('.container') as HTMLElement;
+            const exportElement = container || iframeDoc.body;
+            if (exportElement) {
+              try {
+                const dataUrl = await exportNodeToPngDataUrl(exportElement, { fontEmbedCSS: cssContent });
+                const response = await fetch(dataUrl);
+                const blob = await response.blob();
+                
+                // 第一个文件命名为 template_时间戳.png
+                const fileName = `template_${timestamp}.png`;
+                zip.file(fileName, blob);
+                successCount++;
+                bannerIndex++;
+              } catch (err) {
+                console.error(`导出模板失败:`, err);
+              }
+            }
+          }
+        }
+      }
+
+      // 2. 然后生成所有JSON数据项
       for (let i = 0; i < jsonData.length; i++) {
+        // 跳过第一个空对象（已经在上面处理了）
+        if (i === 0 && Object.keys(jsonData[i]).length === 0) {
+          continue;
+        }
         
         bannerIndex++; // 实际生成的文件序号从1开始（模板已占第1个）
         setCurrentIndex(i);
@@ -952,13 +1315,10 @@ export const BannerBatchPage: React.FC = () => {
 
         const row = jsonData[i];
         
-        // 第一条是模板数据，命名为 template_时间戳.png
-        // 其他数据如果有 id，使用 id_时间戳，否则使用 banner_序号_时间戳（序号从1开始）
-        const fileName = i === 0
-          ? `template_${timestamp}.png`
-          : (row.id 
-            ? `${row.id}_${timestamp}.png`
-            : `banner_${bannerIndex}_${timestamp}.png`);
+        // 如果有 id，使用 id_时间戳，否则使用 banner_序号_时间戳（序号从1开始）
+        const fileName = row.id 
+          ? `${row.id}_${timestamp}.png`
+          : `banner_${bannerIndex}_${timestamp}.png`;
 
         try {
           // 导出为 Data URL
@@ -989,9 +1349,11 @@ export const BannerBatchPage: React.FC = () => {
         document.body.removeChild(a);
         URL.revokeObjectURL(a.href);
 
-        // 计算实际生成的数量（第一条是模板数据，其余是JSON数据）
-        const templateCount = 1; // 第一条是模板数据
-        const dataCount = jsonData.length > 1 ? jsonData.length - 1 : 0; // 除了第一条模板数据外的数据项
+        // 计算实际生成的数量：1个模板 + JSON数据数量
+        const templateCount = 1; // 总是生成1个模板
+        const dataCount = jsonData.length > 0 && Object.keys(jsonData[0]).length === 0 
+          ? jsonData.length - 1  // 如果第一个是空对象，减去1
+          : jsonData.length;      // 否则使用全部数量
         setSuccess(`成功生成 ${successCount} 张 Banner（${templateCount} 个模板 + ${dataCount} 个数据项），已打包为 ZIP 文件`);
 
         // ✅ 生成完成后，把 currentIndex 复位，避免 2×2 预览全部指到最后一张
@@ -1089,18 +1451,32 @@ export const BannerBatchPage: React.FC = () => {
     }
   }, [htmlContent, cssContent, adjustIframeSize]);
 
-  // 当选中字段变化时，重新高亮（用于 iframe 内容更新后）
+  // Effect 2: 字段高亮 (Field Highlighting) - 仅负责在字段变化时高亮对应元素
   useEffect(() => {
     if (selectedField && htmlContent) {
       // 延迟一下，确保 iframe 内容已渲染
       const timer = setTimeout(() => {
         const activeIndex = getActiveIndex();
         highlightElementInIframe(selectedField, activeIndex);
-        syncSelectedFieldValueFromIframe(selectedField, activeIndex);
       }, 200);
       return () => clearTimeout(timer);
     }
-  }, [selectedField, htmlContent, cssContent, highlightElementInIframe, getActiveIndex, syncSelectedFieldValueFromIframe]);
+  }, [selectedField, htmlContent, highlightElementInIframe, getActiveIndex]);
+  
+  // Effect 3: 输入框值同步 (Input Sync) - 负责同步右侧输入框的值
+  useEffect(() => {
+    if (selectedField) {
+      // 优先从 editedValues 获取已编辑的值
+      const edits = editedValues[currentIndex];
+      if (edits && edits[selectedField] !== undefined) {
+        setSelectedFieldValue(edits[selectedField]);
+      } else {
+        // 如果没有编辑过，从 iframe DOM 读取当前值
+        const activeIndex = getActiveIndex();
+        syncSelectedFieldValueFromIframe(selectedField, activeIndex);
+      }
+    }
+  }, [currentIndex, selectedField, editedValues, syncSelectedFieldValueFromIframe, getActiveIndex]);
   
   // 当 selectedBannerIndex 变化时，同步字段值（如果已选中字段）
   useEffect(() => {
@@ -1303,6 +1679,24 @@ export const BannerBatchPage: React.FC = () => {
                     className="template-file-input"
                   />
                   <span className="btn btn-primary btn-small">上传 ZIP 模板</span>
+                </label>
+              </div>
+
+              {/* 上传Excel区域（中间） */}
+              <div className="template-excel-upload-section">
+                <h3>上传Excel</h3>
+                <p className="template-upload-hint">
+                  <br></br>
+                </p>
+                <label className="template-upload-label">
+                  <input
+                    ref={excelInputRef}
+                    type="file"
+                    accept=".xlsx,.xls"
+                    onChange={(e) => handleExcelUpload(e.target.files?.[0] || null)}
+                    className="template-file-input"
+                  />
+                  <span className="btn btn-primary btn-small">上传 Excel</span>
                 </label>
               </div>
 

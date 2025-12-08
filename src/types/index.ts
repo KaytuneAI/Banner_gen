@@ -13,3 +13,25 @@ export type BannerData = Record<string, string | number | string[] | undefined> 
 // 兼容旧版本的 BannerFields
 export type BannerFields = BannerData;
 
+// Banner 渲染数据结构（用于 Excel 解析）
+export interface BannerRenderData {
+  id: string;                 // 一行的唯一ID，可用品牌+SKU编码
+  templateId: string;         // 先填死，比如 "DEFAULT" 或按品牌填写
+
+  productTitle: string;       // 商品标题：品牌 + 商品名
+  productSubtitle: string;    // 规格、卖点短补充（可为空）
+  priceMain: string;          // 主价格文本，例如 "¥39.9"
+  priceTag?: string;          // 价格补充，如 "单件直降"（可选）
+  couponText?: string;        // 券说明一句话（可选）
+
+  benefitTitle: string;       // 主利益点标题，用于 banner 主文案
+  benefitLine1?: string;      // 权益行1，例如 "买1赠：xxx"
+  benefitLine2?: string;      // 权益行2
+  benefitLine3?: string;      // 权益行3
+
+  cornerTag?: string;         // 角标，如 "新品"、"爆款"（可选）
+  
+  // 保留所有原始字段，以便后续使用
+  rawData?: Record<string, any>;  // 包含所有原始Excel字段，如"单促价1"、"时间"、"主图brief"等
+}
+

@@ -8,7 +8,6 @@ import {
   replaceHtmlImgSrcWithBase64,
   replaceCssUrlWithBase64,
   buildInlineHtml,
-  extractTemplateDataFromHtml,
 } from "./htmlUtils";
 
 export interface ZipProcessResult {
@@ -195,10 +194,7 @@ export const processZipFile = async (file: File): Promise<ZipProcessResult> => {
     }
   });
 
-  // 10. 从模板 HTML 中提取字段值，生成第一条 JSON 数据
-  const templateData = extractTemplateDataFromHtml(finalHtml);
-  
-  // 11. 处理 JSON 数据文件（如果存在）
+  // 10. 处理 JSON 数据文件（如果存在）
   let processedJsonData: BannerData[] = [];
   if (jsonFiles.length > 0) {
     try {
@@ -213,7 +209,7 @@ export const processZipFile = async (file: File): Promise<ZipProcessResult> => {
       const processedJsonDataArray = Array.isArray(parsedJson) ? parsedJson : [parsedJson];
       
       // 遍历 JSON 数据，替换图片路径为 Base64
-      const processedArray = processedJsonDataArray.map((item: BannerData) => {
+      processedJsonData = processedJsonDataArray.map((item: BannerData) => {
         const processedItem: BannerData = { ...item };
         
         Object.keys(processedItem).forEach((key) => {
@@ -242,19 +238,15 @@ export const processZipFile = async (file: File): Promise<ZipProcessResult> => {
         return processedItem;
       });
 
-      // 将模板数据作为第一条，然后添加 JSON 数据
-      processedJsonData = [templateData, ...processedArray];
+      // 如果zip文件里有json文件，第一个渲染html的内容（不应用json数据）
+      // json的替换素材从第二个开始
+      processedJsonData = [{} as BannerData, ...processedJsonData];
     } catch (jsonErr) {
       console.warn("解析 ZIP 中的 JSON 文件失败:", jsonErr);
-      // 即使 JSON 解析失败，也要包含模板数据
-      processedJsonData = [templateData];
     }
-  } else {
-    // 如果没有 JSON 文件，只包含模板数据
-    processedJsonData = [templateData];
   }
 
-  // 12. 构建成功消息
+  // 11. 构建成功消息
   let successMsg = `成功加载 ZIP 模板: ${file.name}`;
   if (htmlFiles.length > 0) {
     successMsg += ` (HTML: ${mainHtmlEntry.name})`;

@@ -243,6 +243,8 @@ export const processZipFile = async (file: File): Promise<ZipProcessResult> => {
       processedJsonData = [{} as BannerData, ...processedJsonData];
     } catch (jsonErr) {
       console.warn("解析 ZIP 中的 JSON 文件失败:", jsonErr);
+      // 即使 JSON 解析失败，也要确保至少有一个模板占位符，以便显示 HTML 模板
+      processedJsonData = [{} as BannerData];
     }
   }
 

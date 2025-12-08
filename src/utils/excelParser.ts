@@ -32,19 +32,33 @@ export function getFirstVisibleSheetName(workbook: XLSX.WorkBook): string | unde
 /**
  * 将 sheet 转换为 JSON，只保留可见的行
  * SheetJS 会在 sheet["!rows"] 里标记每一行是否隐藏
+ * 
+ * 注意：XLSX 的 header 参数只支持 1（第一行作为表头），不支持其他数字值
+ * 如果 headerRowIndex !== 0，应该使用手动映射的方式（见 BannerBatchPage.tsx）
+ * 
+ * @param sheet - Excel sheet 对象
+ * @param headerRowIndex - 表头所在的行号（0-based）。只支持 0（第一行），其他值会导致返回空数组
+ * @returns 转换后的 JSON 数据数组
  */
 export function sheetToVisibleJson(sheet: XLSX.WorkSheet, headerRowIndex: number = 0): Record<string, any>[] {
-  // 先把整张表转成 json 行
+  // XLSX 的 header 参数只支持 1（第一行作为表头），不支持其他数字值
+  // 如果表头不在第一行，这个函数不应该被调用，应该使用手动映射
+  if (headerRowIndex !== 0) {
+    console.warn(`sheetToVisibleJson: headerRowIndex (${headerRowIndex}) is not 0. XLSX header parameter only supports 1. Returning empty array. Use manual mapping instead (see BannerBatchPage.tsx).`);
+    return []; // 返回空数组，因为数据会在 BannerBatchPage 中重新解析
+  }
+
+  // 先把整张表转成 json 行，使用 header: 1（第一行作为表头）
   const allRows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, {
     defval: "",
-    header: headerRowIndex + 1,  // header 从1开始计数
+    header: 1,  // XLSX 只支持 1（第一行作为表头）
   });
 
   // 按 rowIndex 对应 !rows 的索引过滤（只保留可见行）
   const visibleRows = allRows.filter((_, rowIndex) => {
     // rowIndex 是 allRows 数组中的索引，需要转换为实际 sheet 中的行号
-    // 因为 allRows 是从 headerRowIndex + 1 行开始的数据行
-    const actualRowIndex = headerRowIndex + 1 + rowIndex;
+    // allRows 是从第 2 行开始的数据行（因为 header: 1 表示第一行是表头）
+    const actualRowIndex = 1 + rowIndex; // header: 1 意味着数据从第 2 行开始（索引 1）
     const rowMeta = sheet["!rows"]?.[actualRowIndex];
     const isHidden = rowMeta && rowMeta.hidden;
     return !isHidden;

@@ -1,11 +1,31 @@
 import { ParsedSheet } from "./excelParser";
 
 export type OfferSheetKind = "ROW_PER_SKU" | "UNKNOWN";
+export type SheetKind = "MULTIROW_PRODUCT" | "ROW_PER_SKU" | "UNKNOWN";
 
 const NAME_COLUMNS = ["商品名称", "产品名称", "品名", "标题"];
 const PRICE_COLUMNS = ["JD前台价", "前台价", "价格", "活动价", "单促价1"];
 const BRIEF_COLUMNS = ["主图brief", "主图文案", "卖点", "权益"];
 const SKU_COLUMNS = ["SKU", "SKU编码", "JD SKU编码", "商品编码", "产品编码"];  // 辅助判断字段
+
+// 价格列关键词（用于多行产品检测）
+const PRICE_HEADER_KEYWORDS = ["价格", "前台价", "促销价", "单促价", "SRP", "MSRP", "JD前台价", "活动价"];
+// 名称列关键词（用于多行产品检测）
+const NAME_HEADER_KEYWORDS = ["商品名称", "产品名称", "品名", "套装名称", "礼盒名称"];
+
+/**
+ * 查找价格列
+ */
+export function findPriceColumn(headers: string[]): string | undefined {
+  return headers.find(h => PRICE_HEADER_KEYWORDS.some(k => h.includes(k)));
+}
+
+/**
+ * 查找产品名称列
+ */
+export function findNameColumn(headers: string[]): string | undefined {
+  return headers.find(h => NAME_HEADER_KEYWORDS.some(k => h.includes(k)));
+}
 
 export interface OfferDetectionResult {
   kind: OfferSheetKind;
@@ -97,5 +117,84 @@ export function detectOfferSheet(sheet: ParsedSheet): OfferDetectionResult {
   }
 
   return { kind: "UNKNOWN" };
+}
+
+/**
+ * 通过价格模式判断 sheet 类型：多行一个产品 vs 一行一个产品
+ * 核心逻辑：检查是否有"有价格的主行 + 没价格但有明细信息的子行"的结构
+ */
+export function detectSheetKindByPricePattern(parsed: ParsedSheet): SheetKind {
+  const priceCol = findPriceColumn(parsed.headers);
+  console.log("detectSheetKindByPricePattern - headers:", parsed.headers);
+  console.log("detectSheetKindByPricePattern - 找到的价格列:", priceCol);
+  if (!priceCol) {
+    console.log("detectSheetKindByPricePattern - 未找到价格列，返回 UNKNOWN");
+    return "UNKNOWN";
+  }
+
+  const rows = parsed.rows;
+  console.log("detectSheetKindByPricePattern - 数据行数:", rows.length);
+  if (rows.length === 0) {
+    console.log("detectSheetKindByPricePattern - 没有数据行，返回 UNKNOWN");
+    return "UNKNOWN";
+  }
+  
+  // 检查第一行数据，看看价格列是否存在
+  console.log("detectSheetKindByPricePattern - 第一行数据:", rows[0]);
+  console.log("detectSheetKindByPricePattern - 第一行数据的所有字段:", Object.keys(rows[0] || {}));
+  console.log("detectSheetKindByPricePattern - 第一行数据的价格列值:", rows[0]?.[priceCol]);
+  
+  let multiRowBlockCount = 0;
+  let singleRowCount = 0;
+
+  let i = 0;
+  while (i < rows.length) {
+    const row = rows[i];
+    const hasPrice = row[priceCol] !== "" && row[priceCol] != null && row[priceCol] !== undefined;
+
+    if (!hasPrice) {
+      i++;
+      continue;
+    }
+
+    // 从这一行往下看看有没有"子行"（价格为空但有其它信息）
+    let j = i + 1;
+    let hasChildRow = false;
+
+    while (j < rows.length && (rows[j][priceCol] === "" || rows[j][priceCol] == null)) {
+      const r = rows[j];
+
+      // 是否有明细/机制/类型/数量这类信息（很粗的判断即可）
+      const hasMechanismInfo =
+        Object.keys(r).some(key =>
+          key.includes("明细") || key.includes("机制") || key.includes("类型") || key.includes("数量")
+        ) && Object.values(r).some(v => v !== "" && v != null);
+
+      if (!hasMechanismInfo) break;
+
+      hasChildRow = true;
+      j++;
+    }
+
+    if (hasChildRow) {
+      multiRowBlockCount++;
+      i = j;
+    } else {
+      singleRowCount++;
+      i++;
+    }
+  }
+
+  // 有明显"主行+子行"的结构，认为是 ADP 风格
+  if (multiRowBlockCount >= 1 && multiRowBlockCount >= singleRowCount) {
+    return "MULTIROW_PRODUCT";
+  }
+
+  // 大多数有价格的行都是单行，就当成一行一个产品
+  if (singleRowCount > 0) {
+    return "ROW_PER_SKU";
+  }
+
+  return "UNKNOWN";
 }
 

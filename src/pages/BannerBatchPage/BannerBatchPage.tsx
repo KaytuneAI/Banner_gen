@@ -9,8 +9,11 @@ import { processZipFile } from "./zipHandler";
 import { handleHtmlUpload as handleHtmlUploadUtil, handleCssUpload as handleCssUploadUtil } from "./fileHandlers";
 import { applyJsonDataToIframe as applyJsonDataToIframeUtil, applyJsonDataToMultiIframe as applyJsonDataToMultiIframeUtil, updatePriceFields } from "./dataApplier";
 import { parseFirstSheet, ParsedSheet, getFirstVisibleSheetName, sheetToVisibleRawRows, sheetToVisibleJson } from "../../utils/excelParser";
-import { detectOfferSheet } from "../../utils/offerDetector";
+import { detectOfferSheet, detectSheetKindByPricePattern } from "../../utils/offerDetector";
 import { parseRowPerSkuSheet, ExcelRowData } from "../../utils/offerRowPerSkuParser";
+import { parseMultiRowProducts } from "../../utils/multiRowProductParser";
+import { parseRowPerSkuProducts } from "../../utils/rowPerSkuProductParser";
+import { ProductBlock } from "../../types";
 import "./BannerBatchPage.css";
 
 export const BannerBatchPage: React.FC = () => {
@@ -284,18 +287,26 @@ export const BannerBatchPage: React.FC = () => {
       console.log("原始行数据（前10行）:", parsedSheet.rawRows);
 
       // 2. 检测是否为 offer 表（会扫描前10行）
+      // 注意：detectOfferSheet 要求有 brief 列，但新的 detectSheetKindByPricePattern 只需要价格列
+      // 所以即使 detectOfferSheet 返回 UNKNOWN，我们仍然可以尝试用 detectSheetKindByPricePattern
       const detection = detectOfferSheet(parsedSheet);
       console.log("检测结果:", detection);
       console.log("找到的表头行号:", detection.headerRowIndex);
 
-      if (detection.kind === "UNKNOWN") {
-        setError("未识别为可用的 offer 编排表（ROW_PER_SKU），请检查表头字段。已扫描前10行。");
-        return;
+      // 如果 detectOfferSheet 返回 UNKNOWN，我们仍然可以继续，因为 detectSheetKindByPricePattern 只需要价格列
+      // 但我们需要先确保表头行被正确识别（用于后续重新解析）
+      let headerRowIndex = detection.headerRowIndex;
+      if (headerRowIndex === undefined) {
+        // 如果 detectOfferSheet 没找到表头，尝试从 parsedSheet 获取
+        headerRowIndex = parsedSheet.headerRowIndex || 0;
+        console.log("使用默认表头行号:", headerRowIndex);
       }
 
-      // 3. 如果表头行不是第一行，需要重新解析数据
+      // 3. 重新解析数据，确保字段名匹配（即使表头行是第一行，也要确保字段名正确）
+      // 因为 sheetToVisibleJson 可能生成 __EMPTY_ 这样的字段名，而不是实际的表头名
       let finalParsedSheet = parsedSheet;
-      if (detection.headerRowIndex !== undefined && detection.headerRowIndex !== 0) {
+      // 如果表头行不是第一行，或者我们需要确保字段名匹配，就重新解析
+      if (headerRowIndex !== undefined && (headerRowIndex !== 0 || true)) { // 暂时总是重新解析以确保字段名匹配
         // 重新解析，从找到的表头行开始
         const XLSX = await import("xlsx");
         const reader = new FileReader();
@@ -325,7 +336,7 @@ export const BannerBatchPage: React.FC = () => {
                 const rowMeta = sheet["!rows"]?.[i];
                 const isHidden = rowMeta && rowMeta.hidden;
                 if (!isHidden) {
-                  if (visibleRowCount === detection.headerRowIndex!) {
+                  if (visibleRowCount === headerRowIndex) {
                     actualHeaderRowIndex = i;
                     break;
                   }
@@ -339,7 +350,7 @@ export const BannerBatchPage: React.FC = () => {
               console.log("表头行的内容（完整）:", headerRowValues);
               console.log("表头行的列数:", headerRowValues.length);
 
-              console.log("重新解析：表头行在可见行中的索引:", detection.headerRowIndex, "在原始 sheet 中的行号:", actualHeaderRowIndex);
+              console.log("重新解析：表头行在可见行中的索引:", headerRowIndex, "在原始 sheet 中的行号:", actualHeaderRowIndex);
 
               // 手动映射：获取所有原始行数据（和表头行使用同一个数据源，确保列数一致）
               const allRawRowsForData = allRawRowsForHeader;
@@ -478,43 +489,49 @@ export const BannerBatchPage: React.FC = () => {
           reader.readAsArrayBuffer(file);
         });
         finalParsedSheet = await reparsePromise;
-        console.log("重新解析后的数据（从第", detection.headerRowIndex + 1, "行开始）:", finalParsedSheet);
+        console.log("重新解析后的数据（从第", headerRowIndex! + 1, "行开始）:", finalParsedSheet);
       }
 
-      // 4. 解析为 Excel 原始数据（包含所有字段，过滤空值）
-      console.log("准备解析数据，finalParsedSheet.rows 数量:", finalParsedSheet.rows.length);
-      console.log("使用的字段名:", {
-        nameColumn: detection.nameColumn,
-        priceColumn: detection.priceColumn,
-        briefColumn: detection.briefColumn,
-      });
-      console.log("finalParsedSheet.headers:", finalParsedSheet.headers);
-      console.log("前3行原始数据:", finalParsedSheet.rows.slice(0, 3));
-      console.log("第一行的所有字段名:", Object.keys(finalParsedSheet.rows[0] || {}));
-      
-      const excelData = parseRowPerSkuSheet(finalParsedSheet, detection);
-      console.log("解析的 Excel 数据:", excelData);
-      console.log("解析后的数据条数:", excelData.length);
+      // 4. 判断 sheet 类型：多行一个产品 vs 一行一个产品
+      const sheetKind = detectSheetKindByPricePattern(finalParsedSheet);
+      console.log("Sheet 类型检测结果:", sheetKind);
 
-      if (excelData.length === 0) {
-        // 提供更详细的错误信息
-        const rowCount = finalParsedSheet.rows.length;
-        const nameColumn = detection.nameColumn;
-        const nonEmptyRows = finalParsedSheet.rows.filter(row => row[nameColumn || ""]).length;
-        setError(`未能从 Excel 中提取到有效数据。总行数: ${rowCount}，包含"${nameColumn}"的行数: ${nonEmptyRows}。请检查数据行或表头识别是否正确。`);
+      // 5. 根据类型解析为 ProductBlock[]
+      let products: ProductBlock[] = [];
+      
+      if (sheetKind === "MULTIROW_PRODUCT") {
+        products = parseMultiRowProducts(finalParsedSheet);
+        console.log("多行产品解析结果:", products);
+        console.log("产品数量:", products.length);
+        if (products.length > 0) {
+          console.log("第一个产品包含的行数:", products[0].rows.length);
+        }
+      } else if (sheetKind === "ROW_PER_SKU") {
+        products = parseRowPerSkuProducts(finalParsedSheet);
+        console.log("单行产品解析结果:", products);
+        console.log("产品数量:", products.length);
+      } else {
+        setError("未识别为可用的 Excel 结构（MULTIROW_PRODUCT 或 ROW_PER_SKU），请检查表头字段。");
         return;
       }
 
-      // 5. 显示成功消息和预览（前3条）
-      const headerInfo = detection.headerRowIndex !== undefined && detection.headerRowIndex > 0 
-        ? `（表头在第${detection.headerRowIndex + 1}行）`
-        : "";
-      setSuccess(`成功解析 ${excelData.length} 条数据（ROW_PER_SKU 模式${headerInfo}）`);
-      console.log("前3条数据预览:", excelData.slice(0, 3));
+      if (products.length === 0) {
+        const rowCount = finalParsedSheet.rows.length;
+        setError(`未能从 Excel 中提取到有效产品数据。总行数: ${rowCount}。请检查数据行或表头识别是否正确。`);
+        return;
+      }
 
-      // 6. 自动下载 JSON 文件
+      // 6. 显示成功消息和预览（前3条）
+      const headerInfo = headerRowIndex !== undefined && headerRowIndex > 0 
+        ? `（表头在第${headerRowIndex + 1}行）`
+        : "";
+      const kindText = sheetKind === "MULTIROW_PRODUCT" ? "多行产品" : "单行产品";
+      setSuccess(`成功解析 ${products.length} 个产品（${kindText}模式${headerInfo}）`);
+      console.log("前3个产品预览:", products.slice(0, 3));
+
+      // 7. 自动下载 JSON 文件
       try {
-        const jsonString = JSON.stringify(excelData, null, 2); // 格式化 JSON，缩进2空格
+        const jsonString = JSON.stringify(products, null, 2); // 格式化 JSON，缩进2空格
         const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -523,7 +540,7 @@ export const BannerBatchPage: React.FC = () => {
         // 生成文件名：使用原文件名 + 时间戳
         const originalFileName = file.name.replace(/\.[^/.]+$/, ""); // 去掉扩展名
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5); // 格式：2024-01-01T12-00-00
-        link.download = `${originalFileName}_ExcelData_${timestamp}.json`;
+        link.download = `${originalFileName}_OfferProducts_${timestamp}.json`;
         
         document.body.appendChild(link);
         link.click();
@@ -536,7 +553,7 @@ export const BannerBatchPage: React.FC = () => {
         // 下载失败不影响主流程，只记录警告
       }
 
-      // TODO: 后续 Brief 可以将 excelData 转换为 BannerData[] 并应用到模板
+      // TODO: 后续 Brief 可以将 products 转换为 BannerData[] 并应用到模板
 
     } catch (err) {
       const message = err instanceof Error ? err.message : "Excel 文件处理失败";
